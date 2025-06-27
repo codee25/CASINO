@@ -5,108 +5,114 @@ const reel2 = document.getElementById('reel2');
 const reel3 = document.getElementById('reel3');
 const messageDiv = document.getElementById('message');
 
-// Отримуємо user_id з Telegram WebApp
-// Цей ID використовується для ідентифікації користувача на бекенді
-// Цей рядок може видавати TypeError, якщо Web App відкривається не через Telegram.
-// Це нормально, якщо ви тестуєте його напряму, але для роботи потрібен Telegram.
-const userId = Telegram.WebApp.initDataUnsafe?.user?.id; // Додано оператор ?. для безпечного доступу
+// 🧠 Безпечна ініціалізація Telegram WebApp
+let userId = null;
 
-// =================================================================
-// ПОЧАТОК: ДОДАНО БАЗОВИЙ URL ВАШОГО БОТА (API БЕКЕНДУ)
-// =================================================================
-// Важливо: замініть 'https://my-slot-bot.onrender.com' на АКТУАЛЬНИЙ URL ВАШОГО БОТА!
-// Цей URL - це WEBHOOK_HOST, який ви налаштували для вашого бота на Render.com.
-const API_BASE_URL = 'https://my-slot-bot.onrender.com';
-// =================================================================
-// КІНЕЦЬ: ДОДАНО БАЗОВИЙ URL ВАШОГО БОТА
-// =================================================================
+if (typeof Telegram !== 'undefined' && Telegram.WebApp && Telegram.WebApp.initDataUnsafe?.user?.id) {
+    userId = Telegram.WebApp.initDataUnsafe.user.id;
+} else {
+    console.warn('Telegram WebApp не знайдено або ви тестуєте не через Telegram.');
+    messageDiv.textContent = '⚠️ Увійдіть через Telegram для гри.';
+    spinButton.disabled = true;
+}
 
+// 🌐 URL бекенду (твій актуальний Render URL)
+const API_BASE_URL = 'https://casino-0h0l.onrender.com';
 
-// Функція для оновлення балансу на екрані
+// 📟 Оновлення балансу
 async function updateBalanceDisplay() {
+    if (!userId) return;
+
     try {
-        const response = await fetch(`${API_BASE_URL}/api/get_balance`, { // Змінено шлях
+        const response = await fetch(`${API_BASE_URL}/api/get_balance`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ user_id: userId })
         });
-        const data = await response.json();
-        if (response.ok) {
-            userBalanceSpan.textContent = data.balance;
-        } else {
-            messageDiv.textContent = `Помилка: ${data.error}`;
+
+        if (!response.ok) {
+            const errData = await response.json();
+            messageDiv.textContent = `Помилка: ${errData.error}`;
             messageDiv.className = 'message lose-message';
+            return;
         }
+
+        const data = await response.json();
+        userBalanceSpan.textContent = data.balance;
     } catch (error) {
         console.error('Помилка при отриманні балансу:', error);
-        messageDiv.textContent = 'Не вдалося підключитися до сервера для отримання балансу.';
+        messageDiv.textContent = '🚫 Помилка звʼязку з сервером.';
         messageDiv.className = 'message lose-message';
     }
 }
 
-// Функція для анімації барабанів
+// 🎞️ Анімація барабанів
 function animateReels(reels, finalSymbols) {
     return new Promise(resolve => {
-        let completedAnimations = 0;
+        let completed = 0;
         reels.forEach((reel, index) => {
             reel.classList.add('spinning');
             setTimeout(() => {
                 reel.classList.remove('spinning');
                 reel.textContent = finalSymbols[index];
-                completedAnimations++;
-                if (completedAnimations === reels.length) {
-                    resolve();
-                }
-            }, 1000 + index * 200); 
+                completed++;
+                if (completed === reels.length) resolve();
+            }, 1000 + index * 200);
         });
     });
 }
 
-// Обробник натискання кнопки "Крутити!"
+// 🎰 Обробка спіна
 spinButton.addEventListener('click', async () => {
+    if (!userId) return;
+
     spinButton.disabled = true;
     messageDiv.textContent = '';
-
-    reel1.textContent = '?';
-    reel2.textContent = '?';
-    reel3.textContent = '?';
-    
     const reels = [reel1, reel2, reel3];
-    reels.forEach(reel => reel.classList.add('spinning'));
+
+    reels.forEach((r) => {
+        r.textContent = '?';
+        r.classList.add('spinning');
+    });
 
     try {
-        const response = await fetch(`${API_BASE_URL}/api/spin`, { // Змінено шлях
+        const response = await fetch(`${API_BASE_URL}/api/spin`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ user_id: userId })
         });
+
         const data = await response.json();
 
         if (response.ok) {
             await animateReels(reels, data.symbols);
-
             userBalanceSpan.textContent = data.new_balance;
+
             if (data.winnings > 0) {
                 messageDiv.textContent = `🎉 Ви виграли ${data.winnings} фантиків! 🎉`;
                 messageDiv.className = 'message win-message';
             } else {
-                messageDiv.textContent = 'Спробуйте ще раз!';
+                messageDiv.textContent = '😢 Спробуйте ще раз!';
                 messageDiv.className = 'message lose-message';
             }
         } else {
-            messageDiv.textContent = `Помилка: ${data.error}`;
+            messageDiv.textContent = `❌ Помилка: ${data.error}`;
             messageDiv.className = 'message lose-message';
-            reels.forEach(reel => reel.classList.remove('spinning'));
+            reels.forEach(r => r.classList.remove('spinning'));
         }
     } catch (error) {
         console.error('Помилка при спіні:', error);
-        messageDiv.textContent = 'Не вдалося підключитися до сервера для спіна.';
+        messageDiv.textContent = '🚫 Не вдалося зʼєднатись із сервером.';
         messageDiv.className = 'message lose-message';
-        reels.forEach(reel => reel.classList.remove('spinning'));
+        reels.forEach(r => r.classList.remove('spinning'));
     } finally {
         spinButton.disabled = false;
     }
 });
 
-// Завантажуємо баланс при завантаженні Web App (коли сторінка відкривається)
-window.onload = updateBalanceDisplay;
+// 🚀 Початкове завантаження балансу
+window.onload = () => {
+    if (userId) {
+        updateBalanceDisplay();
+    }
+};

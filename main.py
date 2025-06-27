@@ -196,7 +196,8 @@ app_aiohttp.router.add_post('/api/spin', api_spin, name='api_spin')
 
 # Тепер застосовуємо CORS
 cors = aiohttp_cors.setup(app_aiohttp, defaults={
-    WEB_APP_URL: aiohttp_cors.ResourceOptions(
+    "https://my-slot-webapp.onrender.com": aiohttp_cors.ResourceOptions(
+
         allow_credentials=True,
         expose_headers="*",
         allow_headers="*",
