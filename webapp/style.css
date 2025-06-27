@@ -1,0 +1,113 @@
+body {
+    font-family: Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background-color: #282c34;
+    color: #fff;
+    margin: 0;
+    overflow: hidden;
+}
+
+.container {
+    background-color: #3a3f47;
+    padding: 30px;
+    border-radius: 15px;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+    text-align: center;
+    width: 90%;
+    max-width: 400px;
+}
+
+h1 {
+    color: #ffd700;
+    margin-bottom: 20px;
+}
+
+.balance {
+    font-size: 1.2em;
+    margin-bottom: 20px;
+    color: #a0a0a0;
+}
+
+#userBalance {
+    font-weight: bold;
+    color: #fff;
+}
+
+.slot-machine {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 30px;
+    perspective: 500px; /* Для 3D-ефекту при анімації */
+}
+
+.reel {
+    width: 80px;
+    height: 80px;
+    background-color: #1a1e24;
+    border: 3px solid #ffd700;
+    border-radius: 10px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 3em;
+    font-weight: bold;
+    overflow: hidden;
+    color: #fff;
+    transition: transform 0.5s ease-out; /* Для плавного переходу */
+}
+
+button {
+    background-color: #4CAF50;
+    color: white;
+    padding: 15px 25px;
+    border: none;
+    border-radius: 8px;
+    font-size: 1.2em;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    width: 100%;
+}
+
+button:hover {
+    background-color: #45a049;
+}
+
+button:disabled {
+    background-color: #666;
+    cursor: not-allowed;
+}
+
+.message {
+    margin-top: 20px;
+    font-size: 1.1em;
+    color: #fff;
+    min-height: 25px; /* Щоб не "стрибало" при появі тексту */
+}
+
+.win-message {
+    color: #00ff00;
+    font-weight: bold;
+}
+
+.lose-message {
+    color: #ff0000;
+    font-weight: bold;
+}
+
+/* Анімація спіна (можна зробити складнішою) */
+@keyframes spinReel {
+    0% { transform: translateY(0); }
+    25% { transform: translateY(-100%); }
+    50% { transform: translateY(0); }
+    75% { transform: translateY(-100%); }
+    100% { transform: translateY(0); }
+}
+
+/* Клас для застосування анімації */
+.spinning {
+    animation: spinReel 0.5s linear infinite; /* Швидка нескінченна анімація під час спіна */
+}
