@@ -202,7 +202,7 @@ async def send_welcome(message: Message):
     reply_markup=keyboard
 )
 
-FREE_COINS_AMOUNT = 500
+FREE_COINS_AMOUNT = 5000
 COOLDOWN_HOURS = 24
 
 @dp.message(Command("get_coins"))
