@@ -1,6 +1,6 @@
 aiogram==2.25.1
-aiohttp==3.9.5
+aiohttp==3.8.6  
 psycopg2-binary==2.9.9
 flask==3.0.3
 gunicorn==22.0.0
-eventlet==0.33.3 
+eventlet==0.33.3
