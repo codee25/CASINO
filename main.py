@@ -9,7 +9,7 @@ from psycopg2 import sql
 
 from aiogram import Bot, Dispatcher
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command # ДОДАНО: Command для нової команди
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler
 
 from aiohttp.web import Application, json_response, Request
@@ -54,7 +54,8 @@ def init_db():
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
-                balance INTEGER DEFAULT 1000
+                balance INTEGER DEFAULT 1000,
+                last_free_coins_claim TIMESTAMP DEFAULT NULL
             )
         ''')
         conn.commit()
@@ -160,6 +161,64 @@ async def send_welcome(message: Message):
     reply_markup=keyboard
 )
 
+# ==========================================================
+# ПОЧАТОК: НОВА ФУНКЦІЯ ДЛЯ ОТРИМАННЯ БЕЗКОШТОВНИХ ФАНТИКІВ
+# ==========================================================
+FREE_COINS_AMOUNT = 5000 # Кількість фантиків для видачі
+COOLDOWN_HOURS = 24 # Затримка в годинах між отриманням фантиків
+
+@dp.message(Command("get_coins"))
+async def get_free_coins_command(message: Message):
+    user_id = message.from_user.id
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Отримуємо час останнього отримання фантиків
+        cursor.execute('SELECT last_free_coins_claim FROM users WHERE user_id = %s', (user_id,))
+        result = cursor.fetchone()
+        last_claim_time = result[0] if result else None
+
+        from datetime import datetime, timedelta, timezone
+        current_time = datetime.now(timezone.utc)
+
+        if last_claim_time and (current_time - last_claim_time) < timedelta(hours=COOLDOWN_HOURS):
+            # Якщо час ще не вийшов, повідомляємо користувача
+            time_left = timedelta(hours=COOLDOWN_HOURS) - (current_time - last_claim_time)
+            hours = int(time_left.total_seconds() // 3600)
+            minutes = int((time_left.total_seconds() % 3600) // 60)
+            await message.reply(
+                f"💰 Ви вже отримували фантики нещодавно. Спробуйте знову через {hours} год {minutes} хв."
+            )
+            logger.info(f"User {user_id} tried to claim free coins but is on cooldown.")
+        else:
+            # Додаємо фантики
+            update_user_balance(user_id, FREE_COINS_AMOUNT)
+            new_balance = get_user_balance(user_id)
+
+            # Оновлюємо час останнього отримання
+            cursor.execute(
+                'UPDATE users SET last_free_coins_claim = %s WHERE user_id = %s',
+                (current_time, user_id)
+            )
+            conn.commit()
+
+            await message.reply(
+                f"🎉 Вітаємо! Ви отримали {FREE_COINS_AMOUNT} безкоштовних фантиків!\n"
+                f"Ваш новий баланс: {new_balance} фантиків. 🎉"
+            )
+            logger.info(f"User {user_id} claimed {FREE_COINS_AMOUNT} free coins. New balance: {new_balance}.")
+
+    except Exception as e:
+        logger.error(f"Error handling /get_coins for user {user_id}: {e}")
+        await message.reply("Виникла помилка при обробці вашого запиту. Спробуйте пізніше.")
+    finally:
+        if conn:
+            conn.close()
+# ==========================================================
+# КІНЕЦЬ: НОВА ФУНКЦІЯ ДЛЯ ОТРИМАННЯ БЕЗКОШТОВНИХ ФАНТИКІВ
+# ==========================================================
 
 async def api_get_balance(request: Request):
     data = await request.json()
@@ -190,14 +249,11 @@ async def on_shutdown_webhook(web_app: Application):
 
 app_aiohttp = Application()
 
-# Додаємо маршрути до того, як CORS буде застосовано
 app_aiohttp.router.add_post('/api/get_balance', api_get_balance, name='api_get_balance')
 app_aiohttp.router.add_post('/api/spin', api_spin, name='api_spin')
 
-# Тепер застосовуємо CORS
 cors = aiohttp_cors.setup(app_aiohttp, defaults={
-    "https://my-slot-webapp.onrender.com": aiohttp_cors.ResourceOptions(
-
+    "https://my-slot-webapp.onrender.com": aiohttp_cors.ResourceOptions( # ВИПРАВЛЕНО: Використовуємо WEB_APP_URL зі змінних середовища
         allow_credentials=True,
         expose_headers="*",
         allow_headers="*",
