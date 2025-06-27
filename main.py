@@ -153,15 +153,13 @@ async def send_welcome(message: Message):
     ])
 
     await message.reply(
-        f"Привіт, {message.from_user.first_name}!
-"
-        f"Ласкаво просимо до віртуального Слот-Казино!
-"
-        f"Ваш поточний баланс: {current_balance} фантиків.
-"
-        f"Натисніть кнопку нижче, щоб почати грати!",
-        reply_markup=keyboard
-    )
+    f"""Привіт, {message.from_user.first_name}!
+Ласкаво просимо до віртуального Слот-Казино!
+Ваш поточний баланс: {current_balance} фантиків.
+Натисніть кнопку нижче, щоб почати грати!""",
+    reply_markup=keyboard
+)
+
 
 async def api_get_balance(request: Request):
     data = await request.json()
