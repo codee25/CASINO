@@ -2,75 +2,66 @@ import logging
 import os
 import json
 import random
-import urllib.parse # Додаємо для парсингу URL бази даних
+import urllib.parse
 
 import psycopg2
 from psycopg2 import sql
 
 from aiogram import Bot, Dispatcher
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message
-from aiogram.filters import CommandStart # Для фільтрації команд
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler # Для webhook
+from aiogram.filters import CommandStart
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler
 
-from aiohttp.web import Application, json_response, Request # Для веб-сервера та API
-# AppRunner та TCPSite більше не потрібні, оскільки Gunicorn запускає додаток.
-# Якщо ви запускаєте локально без Gunicorn, розкоментуйте наступний рядок:
-# from aiohttp.web_runner import AppRunner, TCPSite 
+from aiohttp.web import Application, json_response, Request
+# ДОДАЄМО: aiohttp_cors для налаштування CORS
+import aiohttp_cors # <--- НОВИЙ ІМПОРТ
 
 # --- Налаштування логування ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- Змінні середовища (будуть встановлені на Render.com) ---
+# --- Змінні середовища ---
 API_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-WEB_APP_URL = os.getenv('WEB_APP_FRONTEND_URL', 'https://placeholder.com') # URL вашого Web App
-WEBHOOK_HOST = os.getenv('WEBHOOK_HOST') # URL вашого бота на Render.com
+WEB_APP_URL = os.getenv('WEB_APP_FRONTEND_URL', 'https://placeholder.com')
+WEBHOOK_HOST = os.getenv('WEBHOOK_HOST')
 WEBHOOK_PATH = f'/webhook/{API_TOKEN}'
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 # --- Налаштування бази даних PostgreSQL ---
-# Тепер використовуємо ОДНУ змінну середовища для повного URL підключення
 DATABASE_URL = os.getenv('DATABASE_URL')
 
 # ==========================================================
 # ПОЧАТОК: ІНІЦІАЛІЗАЦІЯ BOT ТА DISPATCHER
-# ЦІ ОБ'ЄКТИ ПОВИННІ БУТИ ВИЗНАЧЕНІ ТУТ, ПЕРЕД ТИМ, ЯК ВОНИ БУДУТЬ ВИКОРИСТАНІ
-# У НАЛАШТУВАННЯХ AIOHTTP WEB SERVER
-# ==========================================================
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher() # Диспетчер ініціалізується без бота у v3
-# ==========================================================
+dp = Dispatcher()
 # КІНЕЦЬ: ІНІЦІАЛІЗАЦІЯ BOT ТА DISPATCHER
 # ==========================================================
 
+# ... (get_db_connection, init_db, get_user_balance, update_user_balance, SYMBOLS, BET_AMOUNT, PAYOUTS, spin_slot - залишаються без змін) ...
 
 def get_db_connection():
     """Створює та повертає з'єднання до бази даних PostgreSQL за URL."""
     conn = None
     try:
-        # Парсимо DATABASE_URL, щоб отримати окремі компоненти (хост, порт, користувач, пароль, назву БД)
         url = urllib.parse.urlparse(DATABASE_URL)
-        
         conn = psycopg2.connect(
-            database=url.path[1:], # Видаляємо перший слеш з шляху, щоб отримати назву БД
+            database=url.path[1:],
             user=url.username,
             password=url.password,
             host=url.hostname,
             port=url.port,
-            sslmode='require' # Важливо для Render.com, щоб використовувати SSL
+            sslmode='require'
         )
         return conn
     except psycopg2.Error as err:
         logger.error(f"Error connecting to PostgreSQL: {err}")
-        raise # Перевикидаємо виняток, щоб проблема була помітна
-    except Exception as e: # Загальний виняток для проблем парсингу URL
+        raise
+    except Exception as e:
         logger.error(f"Failed to parse DATABASE_URL or establish connection: {e}")
-        raise # Перевикидаємо виняток
+        raise
 
 def init_db():
-    """Ініціалізує таблиці в базі даних PostgreSQL.
-    Безпечно викликати багато разів.
-    """
+    """Ініціалізує таблиці в базі даних PostgreSQL."""
     conn = None
     try:
         conn = get_db_connection()
@@ -85,7 +76,6 @@ def init_db():
         logger.info("PostgreSQL database initialized or already exists.")
     except Exception as e:
         logger.error(f"Failed to initialize PostgreSQL database: {e}")
-        # Якщо ініціалізація не вдалася, можливо, з'єднання не було встановлено
     finally:
         if conn:
             conn.close()
@@ -101,12 +91,11 @@ def get_user_balance(user_id):
         if result:
             return result[0]
         else:
-            # Якщо користувача немає, створити його з початковим балансом
             update_user_balance(user_id, 1000)
             return 1000
     except Exception as e:
         logger.error(f"Error getting user balance from PostgreSQL for {user_id}: {e}")
-        return 0 # Повернути 0 або обробити помилку
+        return 0
     finally:
         if conn:
             conn.close()
@@ -117,7 +106,6 @@ def update_user_balance(user_id, amount):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        # Для PostgreSQL використовуємо INSERT ... ON CONFLICT (col) DO UPDATE
         cursor.execute(sql.SQL('''
             INSERT INTO users (user_id, balance) VALUES (%s, %s)
             ON CONFLICT (user_id) DO UPDATE SET balance = users.balance + %s
@@ -130,7 +118,6 @@ def update_user_balance(user_id, amount):
         if conn:
             conn.close()
 
-# --- Логіка Слот-машини ---
 SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀']
 BET_AMOUNT = 100
 
@@ -142,8 +129,8 @@ PAYOUTS = {
     ('🔔', '🔔', '🔔'): 300,
     ('💎', '💎', '💎'): 200,
     ('🍀', '🍀', '🍀'): 150,
-    ('🍒', '🍒'): 100, # Додаємо правило для двох вишні
-    ('🍋', '🍋'): 80,  # Додаємо правило для двох лимонів
+    ('�', '🍒'): 100,
+    ('🍋', '🍋'): 80,
 }
 
 def spin_slot(user_id):
@@ -151,16 +138,13 @@ def spin_slot(user_id):
     if current_balance < BET_AMOUNT:
         return {'error': 'Недостатньо коштів для спіна!'}, current_balance
 
-    update_user_balance(user_id, -BET_AMOUNT) # Віднімаємо ставку
+    update_user_balance(user_id, -BET_AMOUNT)
 
     result_symbols = [random.choice(SYMBOLS) for _ in range(3)]
     winnings = 0
 
-    # Перевіряємо виграші
-    # Перевірка на 3 однакові символи
     if result_symbols[0] == result_symbols[1] == result_symbols[2]:
         winnings = PAYOUTS.get(tuple(result_symbols), 0)
-    # Перевірка на 2 однакові символи, якщо не було 3 однакових
     elif result_symbols[0] == result_symbols[1]:
         winnings = PAYOUTS.get((result_symbols[0], result_symbols[1]), 0)
     elif result_symbols[1] == result_symbols[2]:
@@ -180,13 +164,13 @@ def spin_slot(user_id):
         'new_balance': final_balance
     }, final_balance
 
-# --- Обробники Telegram-бота (aiogram v3 синтаксис) ---
+# --- Обробники Telegram-бота ---
 
 @dp.message(CommandStart())
-async def send_welcome(message: Message): # message: Message - тип для aiogram v3
+async def send_welcome(message: Message):
     user_id = message.from_user.id
-    init_db() # Ініціалізуємо БД при першому старті (безпечно викликати багато разів)
-    current_balance = get_user_balance(user_id) # Отримуємо або створюємо користувача
+    init_db()
+    current_balance = get_user_balance(user_id)
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎰 Відкрити Слот-Казино 🎰", web_app=WebAppInfo(url=WEB_APP_URL))]
@@ -200,8 +184,7 @@ async def send_welcome(message: Message): # message: Message - тип для aio
         reply_markup=keyboard
     )
 
-# --- Обробка запитів від Web App (через aiohttp.web) ---
-# Ці ендпоінти будуть інтегровані в той же веб-сервер, що й Telegram webhook
+# --- Обробка запитів від Web App ---
 
 async def api_get_balance(request: Request):
     data = await request.json()
@@ -229,9 +212,7 @@ async def api_spin(request: Request):
 async def on_startup_webhook(web_app: Application):
     """Викликається при запуску Aiohttp веб-сервера."""
     logger.warning('Starting bot and webhook...')
-    # Ініціалізуємо БД при старті додатку
     init_db()
-    # Встановлюємо webhook для Telegram
     await bot.set_webhook(WEBHOOK_URL)
     logger.info(f"Webhook set to: {WEBHOOK_URL}")
 
@@ -244,6 +225,30 @@ async def on_shutdown_webhook(web_app: Application):
 # Головний Aiohttp додаток, який Gunicorn буде запускати
 app_aiohttp = Application()
 
+# =================================================================
+# ПОЧАТОК: НАЛАШТУВАННЯ CORS
+# Важливо: WEB_APP_URL має бути АКТУАЛЬНИМ URL вашого Static Site
+# (наприклад, https://my-slot-webapp.onrender.com)
+# =================================================================
+# Налаштовуємо CORS для дозволу запитів з Web App URL
+cors = aiohttp_cors.setup(app_aiohttp, defaults={
+    WEB_APP_URL: aiohttp_cors.ResourceOptions(
+        allow_credentials=True,
+        expose_headers="*",
+        allow_headers="*",
+        allow_methods="*",
+    )
+})
+
+# Застосовуємо CORS до ваших API-маршрутів
+# Огортаємо хендлери за допомогою cors.add(route)
+for route in list(app_aiohttp.router.routes()): # Робимо копію, бо маршрути змінюються під час ітерації
+    if route.resource.name in ['api_get_balance', 'api_spin']: # Перевіряємо, чи це ваші API маршрути
+        cors.add(route)
+# =================================================================
+# КІНЕЦЬ: НАЛАШТУВАННЯ CORS
+# =================================================================
+
 # Реєстрація хендлера для Telegram webhook
 SimpleRequestHandler(
     dispatcher=dp,
@@ -251,16 +256,13 @@ SimpleRequestHandler(
 ).register(app_aiohttp, WEBHOOK_PATH)
 
 # Реєстрація API ендпоінтів для Web App
-app_aiohttp.router.add_post('/api/get_balance', api_get_balance)
-app_aiohttp.router.add_post('/api/spin', api_spin)
+# ЦІ МАРШРУТИ ТЕПЕР ОБРОБЛЯЮТЬСЯ ЧЕРЕЗ CORS
+app_aiohttp.router.add_post('/api/get_balance', api_get_balance, name='api_get_balance') # Додаємо name
+app_aiohttp.router.add_post('/api/spin', api_spin, name='api_spin') # Додаємо name
 
 # Додаємо функції запуску/зупинки до Aiohttp додатка
 app_aiohttp.on_startup.append(on_startup_webhook)
 app_aiohttp.on_shutdown.append(on_shutdown_webhook)
 
-
-# Цей блок `if __name__ == '__main__':` більше не використовується для прямого запуску
-# веб-сервера, оскільки його запускатиме Gunicorn.
-# Він може бути корисним для локального тестування (якщо не використовується Gunicorn локально).
 if __name__ == '__main__':
-    pass # Gunicorn запустить 'app_aiohttp'
+    pass
