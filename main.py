@@ -3,13 +3,14 @@ import os
 import json
 import random
 import urllib.parse
+from datetime import datetime, timedelta, timezone # Додано імпорти для часу
 
 import psycopg2
 from psycopg2 import sql
 
 from aiogram import Bot, Dispatcher
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message
-from aiogram.filters import CommandStart, Command # ДОДАНО: Command для нової команди
+from aiogram.filters import CommandStart, Command
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler
 
 from aiohttp.web import Application, json_response, Request
@@ -24,10 +25,21 @@ WEBHOOK_HOST = os.getenv('WEBHOOK_HOST')
 WEBHOOK_PATH = f'/webhook/{API_TOKEN}'
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
+ADMIN_ID_STR = os.getenv('ADMIN_ID')
+ADMIN_ID = None
+try:
+    if ADMIN_ID_STR:
+        ADMIN_ID = int(ADMIN_ID_STR)
+    else:
+        logger.warning("ADMIN_ID environment variable is not set. /add_balance command will not work.")
+except ValueError:
+    logger.error(f"Invalid ADMIN_ID provided in environment variables: '{ADMIN_ID_STR}'. It must be an integer.")
+    ADMIN_ID = None
 
 DATABASE_URL = os.getenv('DATABASE_URL')
+
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher()
 
 def get_db_connection():
     conn = None
@@ -42,8 +54,11 @@ def get_db_connection():
             sslmode='require'
         )
         return conn
+    except psycopg2.Error as err:
+        logger.error(f"DB connection error: {err}")
+        raise
     except Exception as e:
-        logger.error(f"DB connection error: {e}")
+        logger.error(f"Unexpected error during DB connection: {e}")
         raise
 
 def init_db():
@@ -51,17 +66,35 @@ def init_db():
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+
+        # 1. Створення таблиці users, якщо вона не існує
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
-                balance INTEGER DEFAULT 1000,
-                last_free_coins_claim TIMESTAMP DEFAULT NULL
+                balance INTEGER DEFAULT 1000
+                -- last_free_coins_claim ДОДАЄТЬСЯ НИЖЧЕ, ЯКЩО ЙОГО НЕМАЄ
             )
         ''')
         conn.commit()
-        logger.info("DB initialized")
+        logger.info("Table 'users' initialized or already exists.")
+
+        # 2. Додавання нового стовпця last_free_coins_claim, якщо його немає
+        # Ця операція може викликати виняток, якщо стовпець вже існує, тому використовуємо TRY/EXCEPT
+        try:
+            cursor.execute('''
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS last_free_coins_claim TIMESTAMP DEFAULT NULL;
+            ''')
+            conn.commit()
+            logger.info("Column 'last_free_coins_claim' added or already exists.")
+        except psycopg2.Error as e:
+            # Ігноруємо помилку, якщо стовпець вже існує (хоча IF NOT EXISTS має це обробляти)
+            # Якщо виникла інша помилка ALTER TABLE, її слід було б зареєструвати.
+            logger.warning(f"Could not add column 'last_free_coins_claim' (might already exist): {e}")
+        
+        logger.info("DB schema migration checked.")
+
     except Exception as e:
-        logger.error(f"DB init error: {e}")
+        logger.error(f"DB init/migration error: {e}")
     finally:
         if conn:
             conn.close()
@@ -111,7 +144,7 @@ PAYOUTS = {
     ('🍊', '🍊', '🍊'): 600,
     ('🍇', '🍇', '🍇'): 400,
     ('🔔', '🔔', '🔔'): 300,
-    ('💎', '💎', '💎'): 200,
+    ('💎', '�', '💎'): 200,
     ('🍀', '🍀', '🍀'): 150,
     ('🍒', '🍒'): 100,
     ('🍋', '🍋'): 80,
@@ -120,21 +153,29 @@ PAYOUTS = {
 def spin_slot(user_id):
     current_balance = get_user_balance(user_id)
     if current_balance < BET_AMOUNT:
+        logger.info(f"User {user_id} tried to spin with insufficient balance: {current_balance}.")
         return {'error': 'Недостатньо коштів для спіна!'}, current_balance
 
     update_user_balance(user_id, -BET_AMOUNT)
+    
     result_symbols = [random.choice(SYMBOLS) for _ in range(3)]
     winnings = 0
 
     if result_symbols[0] == result_symbols[1] == result_symbols[2]:
         winnings = PAYOUTS.get(tuple(result_symbols), 0)
+        logger.info(f"User {user_id} hit 3 of a kind: {result_symbols}")
     elif result_symbols[0] == result_symbols[1]:
         winnings = PAYOUTS.get((result_symbols[0], result_symbols[1]), 0)
+        logger.info(f"User {user_id} hit 2 of a kind: {result_symbols}")
     elif result_symbols[1] == result_symbols[2]:
         winnings = PAYOUTS.get((result_symbols[1], result_symbols[2]), 0)
+        logger.info(f"User {user_id} hit 2 of a kind (middle-right): {result_symbols}")
 
     if winnings > 0:
         update_user_balance(user_id, winnings)
+        logger.info(f"User {user_id} won {winnings}.")
+    else:
+        logger.info(f"User {user_id} lost on spin. Symbols: {result_symbols}")
 
     final_balance = get_user_balance(user_id)
     return {
@@ -146,7 +187,7 @@ def spin_slot(user_id):
 @dp.message(CommandStart())
 async def send_welcome(message: Message):
     user_id = message.from_user.id
-    init_db()
+    init_db() # Викликаємо ініціалізацію схеми БД при старті
     current_balance = get_user_balance(user_id)
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -161,11 +202,8 @@ async def send_welcome(message: Message):
     reply_markup=keyboard
 )
 
-# ==========================================================
-# ПОЧАТОК: НОВА ФУНКЦІЯ ДЛЯ ОТРИМАННЯ БЕЗКОШТОВНИХ ФАНТИКІВ
-# ==========================================================
-FREE_COINS_AMOUNT = 5000 # Кількість фантиків для видачі
-COOLDOWN_HOURS = 24 # Затримка в годинах між отриманням фантиків
+FREE_COINS_AMOUNT = 500
+COOLDOWN_HOURS = 24
 
 @dp.message(Command("get_coins"))
 async def get_free_coins_command(message: Message):
@@ -175,16 +213,16 @@ async def get_free_coins_command(message: Message):
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Отримуємо час останнього отримання фантиків
-        cursor.execute('SELECT last_free_coins_claim FROM users WHERE user_id = %s', (user_id,))
+        # Отримуємо останній час отримання фантиків та поточний баланс
+        cursor.execute('SELECT last_free_coins_claim, balance FROM users WHERE user_id = %s', (user_id,))
         result = cursor.fetchone()
-        last_claim_time = result[0] if result else None
+        
+        last_claim_time = result[0] if result and result[0] else None
+        current_balance = result[1] if result and result[1] is not None else 1000 # Отримуємо поточний баланс або 1000 за замовчуванням
 
-        from datetime import datetime, timedelta, timezone
         current_time = datetime.now(timezone.utc)
 
         if last_claim_time and (current_time - last_claim_time) < timedelta(hours=COOLDOWN_HOURS):
-            # Якщо час ще не вийшов, повідомляємо користувача
             time_left = timedelta(hours=COOLDOWN_HOURS) - (current_time - last_claim_time)
             hours = int(time_left.total_seconds() // 3600)
             minutes = int((time_left.total_seconds() % 3600) // 60)
@@ -194,21 +232,18 @@ async def get_free_coins_command(message: Message):
             logger.info(f"User {user_id} tried to claim free coins but is on cooldown.")
         else:
             # Додаємо фантики
-            update_user_balance(user_id, FREE_COINS_AMOUNT)
-            new_balance = get_user_balance(user_id)
-
-            # Оновлюємо час останнього отримання
-            cursor.execute(
-                'UPDATE users SET last_free_coins_claim = %s WHERE user_id = %s',
-                (current_time, user_id)
-            )
+            new_balance_after_add = current_balance + FREE_COINS_AMOUNT
+            cursor.execute(sql.SQL('''
+                INSERT INTO users (user_id, balance, last_free_coins_claim) VALUES (%s, %s, %s)
+                ON CONFLICT (user_id) DO UPDATE SET balance = users.balance + %s, last_free_coins_claim = %s
+            '''), (user_id, FREE_COINS_AMOUNT, current_time, FREE_COINS_AMOUNT, current_time))
             conn.commit()
 
             await message.reply(
                 f"🎉 Вітаємо! Ви отримали {FREE_COINS_AMOUNT} безкоштовних фантиків!\n"
-                f"Ваш новий баланс: {new_balance} фантиків. 🎉"
+                f"Ваш новий баланс: {new_balance_after_add} фантиків. 🎉"
             )
-            logger.info(f"User {user_id} claimed {FREE_COINS_AMOUNT} free coins. New balance: {new_balance}.")
+            logger.info(f"User {user_id} claimed {FREE_COINS_AMOUNT} free coins. New balance: {new_balance_after_add}.")
 
     except Exception as e:
         logger.error(f"Error handling /get_coins for user {user_id}: {e}")
@@ -216,15 +251,14 @@ async def get_free_coins_command(message: Message):
     finally:
         if conn:
             conn.close()
-# ==========================================================
-# КІНЕЦЬ: НОВА ФУНКЦІЯ ДЛЯ ОТРИМАННЯ БЕЗКОШТОВНИХ ФАНТИКІВ
-# ==========================================================
 
 async def api_get_balance(request: Request):
     data = await request.json()
     user_id = data.get('user_id')
     if not user_id:
+        logger.warning("api_get_balance: User ID is missing in request.")
         return json_response({'error': 'User ID is required'}, status=400)
+    
     balance = get_user_balance(user_id)
     return json_response({'balance': balance})
 
@@ -232,16 +266,20 @@ async def api_spin(request: Request):
     data = await request.json()
     user_id = data.get('user_id')
     if not user_id:
+        logger.warning("api_spin: User ID is missing in request.")
         return json_response({'error': 'User ID is required'}, status=400)
+    
     result, new_balance = spin_slot(user_id)
     if 'error' in result:
         return json_response(result, status=400)
+    
     return json_response(result)
 
 async def on_startup_webhook(web_app: Application):
     logger.warning('Starting bot and webhook...')
-    init_db()
+    init_db() # Ця функція тепер відповідає за створення/оновлення схеми
     await bot.set_webhook(WEBHOOK_URL)
+    logger.info(f"Webhook set to: {WEBHOOK_URL}")
 
 async def on_shutdown_webhook(web_app: Application):
     logger.warning('Shutting down bot and webhook...')
@@ -253,7 +291,7 @@ app_aiohttp.router.add_post('/api/get_balance', api_get_balance, name='api_get_b
 app_aiohttp.router.add_post('/api/spin', api_spin, name='api_spin')
 
 cors = aiohttp_cors.setup(app_aiohttp, defaults={
-    "https://my-slot-webapp.onrender.com": aiohttp_cors.ResourceOptions( # ВИПРАВЛЕНО: Використовуємо WEB_APP_URL зі змінних середовища
+    WEB_APP_URL: aiohttp_cors.ResourceOptions(
         allow_credentials=True,
         expose_headers="*",
         allow_headers="*",
