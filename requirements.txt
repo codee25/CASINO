@@ -1,4 +1,4 @@
 aiogram>=3.7.0 # Або конкретна стабільна версія (наприклад, 3.7.0)
 aiohttp>=3.9.0 # aiogram v3 вимагає новіші aiohttp
-psycopg2-binary==2.9.9 # Тепер він скомпілюється завдяки libpq-dev у Dockerfile
+psycopg2-binary==2.9.6 # Тепер він скомпілюється завдяки libpq-dev у Dockerfile
 gunicorn==22.0.0
