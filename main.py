@@ -9,7 +9,7 @@ from psycopg2 import sql
 from aiogram import Bot, Dispatcher
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message
 from aiogram.filters import CommandStart # Для фільтрації команд
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_webhook # Для webhook
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler # Для webhook
 from aiohttp.web import Application, json_response, Request # Для веб-сервера та API
 from aiohttp.web_runner import AppRunner, TCPSite # Для запуску Aiohttp сервера
 
