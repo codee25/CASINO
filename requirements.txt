@@ -3,4 +3,4 @@ aiohttp==3.9.5
 psycopg2-binary==2.9.9
 flask==3.0.3
 gunicorn==22.0.0
-gevent==24.2.1
+gevent==22.10.2  
