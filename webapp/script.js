@@ -11,7 +11,7 @@ const dailyBonusButton = document.getElementById('dailyBonusButton');
 const dailyBonusCooldownSpan = document.getElementById('dailyBonusCooldown');
 const quickBonusButton = document.getElementById('quickBonusButton');
 const quickBonusCooldownSpan = document.getElementById('quickBonusCooldown');
-const leaderboardButton = document.getElementById('leaderboardButton');
+const leaderboardButton = document.getElementById('leaderboardButton'); // Змінна для кнопки лідерів
 const leaderboardModal = document.getElementById('leaderboardModal');
 const leaderboardTableBody = document.getElementById('leaderboardTableBody');
 const leaderboardLoading = document.getElementById('leaderboardLoading');
@@ -38,7 +38,7 @@ const SCATTER_SYMBOL = '💰';
 const ALL_REEL_SYMBOLS = [...SYMBOLS, WILD_SYMBOL, SCATTER_SYMBOL];
 
 const BET_AMOUNT = 100;
-const REEL_HEIGHT_PX = 90; // Змінено для кращого вмісту
+const REEL_HEIGHT_PX = 90;
 const REEL_SPIN_CYCLES = 5;
 const REEL_SPIN_DURATION_BASE = 0.8;
 const REEL_STOP_DURATION = 1.0;
@@ -69,12 +69,11 @@ let quickBonusCountdownInterval = null;
 
 if (typeof Telegram !== 'undefined' && Telegram.WebApp && Telegram.WebApp.initDataUnsafe?.user?.id) {
     userId = Telegram.WebApp.initDataUnsafe.user.id;
-    // Намагаємося отримати username, інакше first_name, інакше заглушка
     telegramUsername = Telegram.WebApp.initDataUnsafe.user.username || Telegram.WebApp.initDataUnsafe.user.first_name || `Гравець ${String(userId).slice(-4)}`;
-    console.log(`Telegram User ID: ${userId}, Username: ${telegramUsername}`);
+    console.log(`[WebApp Init] Telegram User ID: ${userId}, Username: ${telegramUsername}`);
     Telegram.WebApp.expand();
 } else {
-    console.warn('Telegram WebApp не знайдено або ви тестуєте не через Telegram. Деякі функції можуть не працювати.');
+    console.warn('[WebApp Init] Telegram WebApp не знайдено або ви тестуєте не через Telegram. Деякі функції можуть не працювати.');
     messageDiv.textContent = '⚠️ Будь ласка, запустіть гру через Telegram.';
     messageDiv.className = 'text-yellow-400 font-bold';
     spinButton.disabled = true;
@@ -121,10 +120,10 @@ async function setupSounds() {
     if (Tone.context.state !== 'running') {
         try {
             await Tone.start();
-            console.log("AudioContext is running.");
+            console.log("[Audio] AudioContext is running.");
             audioPrompt.style.display = 'none';
         } catch (e) {
-            console.error("Помилка ініціалізації аудіо:", e);
+            console.error("[Audio] Помилка ініціалізації аудіо:", e);
             audioPrompt.style.display = 'flex';
             return;
         }
@@ -179,7 +178,7 @@ customModal.querySelector('.modal-content button').addEventListener('click', () 
 // =================================================================
 async function updateBalanceAndProgressDisplay() {
     if (!userId) {
-        console.warn('Cannot update balance and progress: userId is null. Skipping API call.');
+        console.warn('[Balance Update] Cannot update balance and progress: userId is null. Skipping API call.');
         return;
     }
 
@@ -192,6 +191,7 @@ async function updateBalanceAndProgressDisplay() {
 
         if (!response.ok) {
             const errData = await response.json();
+            console.error('[Balance Update] API Error:', errData);
             showCustomModal(`Помилка: ${errData.error || 'Невідома помилка при отриманні даних.'}`, "Помилка завантаження");
             messageDiv.className = 'text-red-500 font-bold';
             return;
@@ -204,7 +204,6 @@ async function updateBalanceAndProgressDisplay() {
         const lastDailyClaim = data.last_daily_bonus_claim ? new Date(data.last_daily_bonus_claim) : null;
         const lastQuickClaim = data.last_quick_bonus_claim ? new Date(data.last_quick_bonus_claim) : null;
 
-        // Анімація зміни балансу
         if (currentBalance !== lastKnownUserBalance) {
             userBalanceSpan.classList.remove('animate-pulse-balance');
             void userBalanceSpan.offsetWidth;
@@ -213,7 +212,6 @@ async function updateBalanceAndProgressDisplay() {
             lastKnownUserBalance = currentBalance;
         }
 
-        // Оновлення XP та Рівня
         const nextLevelIndex = currentLevel < LEVEL_THRESHOLDS.length ? currentLevel : LEVEL_THRESHOLDS.length -1;
         const nextLevelThreshold = LEVEL_THRESHOLDS[nextLevelIndex];
         
@@ -231,14 +229,13 @@ async function updateBalanceAndProgressDisplay() {
         lastKnownUserXP = currentXP;
         lastKnownUserLevel = currentLevel;
         
-        // Оновлення стану кнопок бонусів
         updateDailyBonusButton(lastDailyClaim); 
         updateQuickBonusButton(lastQuickClaim);
 
         messageDiv.textContent = '';
         messageDiv.className = 'text-white';
     } catch (error) {
-        console.error('Помилка при отриманні балансу та прогресу:', error);
+        console.error('[Balance Update] Помилка при отриманні балансу та прогресу:', error);
         showCustomModal('🚫 Помилка звʼязку з сервером. Перевірте зʼєднання.', "Помилка");
         messageDiv.className = 'text-red-500 font-bold';
     }
@@ -248,7 +245,6 @@ async function updateBalanceAndProgressDisplay() {
 // 🎁 Логіка Бонусних Кнопок
 // =================================================================
 
-// Допоміжна функція для форматування часу (ММ:СС або ЧЧ:ММ:СС)
 function formatTime(ms) {
     const totalSeconds = Math.floor(ms / 1000);
     const hours = Math.floor(totalSeconds / 3600);
@@ -262,7 +258,6 @@ function formatTime(ms) {
     }
 }
 
-// Логіка для щоденного бонусу
 function updateDailyBonusButton(lastClaimTime) {
     const now = new Date();
     const cooldownDuration = DAILY_BONUS_COOLDOWN_HOURS * 60 * 60 * 1000;
@@ -330,7 +325,7 @@ dailyBonusButton.addEventListener('click', async () => {
             updateBalanceAndProgressDisplay();
         }
     } catch (error) {
-        console.error('Помилка при отриманні щоденної винагороди:', error);
+        console.error('[Daily Bonus] Помилка при отриманні щоденної винагороди:', error);
         showCustomModal('🚫 Не вдалося зʼєднатись із сервером для винагороди.', "Помилка");
         messageDiv.className = 'text-red-500 font-bold';
         dailyBonusButton.disabled = false;
@@ -339,7 +334,6 @@ dailyBonusButton.addEventListener('click', async () => {
 });
 
 
-// Логіка для швидкого бонусу (15 хвилин)
 function updateQuickBonusButton(lastClaimTime) {
     const now = new Date();
     const cooldownDuration = QUICK_BONUS_COOLDOWN_MINUTES * 60 * 1000;
@@ -352,12 +346,12 @@ function updateQuickBonusButton(lastClaimTime) {
     if (!lastClaimTime || (now.getTime() - lastClaimTime.getTime()) >= cooldownDuration) {
         quickBonusButton.disabled = false;
         quickBonusButton.classList.add('pulsing');
-        quickBonusButton.classList.remove('active-countdown'); // Приховати таймер
+        quickBonusButton.classList.remove('active-countdown');
         quickBonusCooldownSpan.textContent = '';
     } else {
         quickBonusButton.disabled = true;
         quickBonusButton.classList.remove('pulsing');
-        quickBonusButton.classList.add('active-countdown'); // Показати таймер
+        quickBonusButton.classList.add('active-countdown');
         
         const updateCountdown = () => {
             const nowInner = new Date();
@@ -372,7 +366,7 @@ function updateQuickBonusButton(lastClaimTime) {
                 quickBonusCountdownInterval = null;
                 return;
             }
-            quickBonusCooldownSpan.textContent = formatTime(timeLeft); // Формат ММ:СС
+            quickBonusCooldownSpan.textContent = formatTime(timeLeft);
         };
 
         updateCountdown();
@@ -413,7 +407,7 @@ quickBonusButton.addEventListener('click', async () => {
             updateBalanceAndProgressDisplay();
         }
     } catch (error) {
-        console.error('Помилка при отриманні швидкого бонусу:', error);
+        console.error('[Quick Bonus] Помилка при отриманні швидкого бонусу:', error);
         showCustomModal('🚫 Не вдалося зʼєднатись із сервером для швидкого бонусу.', "Помилка");
         messageDiv.className = 'text-red-500 font-bold';
         quickBonusButton.disabled = false;
@@ -425,63 +419,85 @@ quickBonusButton.addEventListener('click', async () => {
 // =================================================================
 // 🏆 Логіка Дошки Лідерів
 // =================================================================
-leaderboardButton.addEventListener('click', async () => {
-    console.log("Leaderboard button clicked."); // Лог для перевірки натискання кнопки
-    leaderboardTableBody.innerHTML = ''; // Очистити попередні дані
-    leaderboardLoading.classList.remove('hidden'); // Показати завантаження
-    leaderboardError.classList.add('hidden'); // Приховати помилку
-    leaderboardModal.classList.add('active'); // Показати модалку (додаємо клас 'active')
 
-    try {
-        const response = await fetch(`${API_BASE_URL}/api/get_leaderboard`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({}) // Немає необхідності передавати user_id для дошки лідерів
-        });
+// Додамо перевірку на існування елементу перед додаванням слухача подій
+if (leaderboardButton) {
+    console.log("[Leaderboard] Leaderboard button element found.");
+    leaderboardButton.addEventListener('click', async () => {
+        console.log("[Leaderboard] Leaderboard button clicked."); // Цей лог повинен спрацьовувати при кліку!
 
-        console.log("Leaderboard API response status:", response.status); // Лог статусу відповіді
-
-        if (!response.ok) {
-            const errData = await response.json();
-            console.error("Leaderboard API error data:", errData); // Лог даних помилки
-            leaderboardError.textContent = `Помилка: ${errData.error || 'Невідома помилка при завантаженні лідерів.'}`;
-            leaderboardError.classList.remove('hidden');
+        // Забезпечуємо, що модалка існує, перш ніж звертатися до її властивостей
+        if (!leaderboardModal) {
+            console.error("[Leaderboard] Leaderboard modal element not found!");
+            showCustomModal('🚫 Помилка: елемент модального вікна лідерів не знайдено.', "Помилка UI");
             return;
         }
 
-        const data = await response.json();
-        console.log("Leaderboard data received:", data); // Лог отриманих даних
+        leaderboardTableBody.innerHTML = ''; // Очистити попередні дані
+        leaderboardLoading.classList.remove('hidden'); // Показати завантаження
+        leaderboardError.classList.add('hidden'); // Приховати помилку
+        leaderboardModal.classList.add('active'); // Показати модалку
 
-        if (data.leaderboard && data.leaderboard.length > 0) {
-            data.leaderboard.forEach((player, index) => {
-                const row = `
-                    <tr class="${(index % 2 === 0) ? 'bg-gray-800' : 'bg-gray-700'}">
-                        <td class="py-2 px-3 font-bold">${index + 1}</td>
-                        <td class="py-2 px-3">${player.username}</td>
-                        <td class="py-2 px-3 text-right">${player.level}</td>
-                        <td class="py-2 px-3 text-right">${player.balance}</td>
-                        <td class="py-2 px-3 text-right">${player.xp}</td>
-                    </tr>
-                `;
-                leaderboardTableBody.insertAdjacentHTML('beforeend', row);
+        try {
+            const response = await fetch(`${API_BASE_URL}/api/get_leaderboard`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
             });
-        } else {
-            leaderboardTableBody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-gray-400">Наразі немає лідерів. Будь першим!</td></tr>';
-        }
-    } catch (error) {
-        console.error('Помилка при завантаженні дошки лідерів:', error); // Лог помилки мережі/парсингу
-        leaderboardError.textContent = '🚫 Не вдалося зʼєднатись із сервером для завантаження дошки лідерів.';
-        leaderboardError.classList.remove('hidden');
-    } finally {
-        leaderboardLoading.classList.add('hidden');
-    }
-});
 
-// Закриття модалки дошки лідерів
-leaderboardModal.querySelector('.close-button').addEventListener('click', () => {
-    console.log("Leaderboard modal close button clicked.");
-    leaderboardModal.classList.remove('active'); // Видалити клас 'active' для приховування
-});
+            console.log("[Leaderboard] API response status:", response.status);
+
+            if (!response.ok) {
+                const errData = await response.json();
+                console.error("[Leaderboard] API error data:", errData);
+                leaderboardError.textContent = `Помилка: ${errData.error || 'Невідома помилка при завантаженні лідерів.'}`;
+                leaderboardError.classList.remove('hidden');
+                return;
+            }
+
+            const data = await response.json();
+            console.log("[Leaderboard] data received:", data);
+
+            if (data.leaderboard && data.leaderboard.length > 0) {
+                data.leaderboard.sort((a, b) => {
+                    if (b.level !== a.level) {
+                        return b.level - a.level; // Sort by level descending
+                    }
+                    return b.xp - a.xp; // Then by XP descending
+                });
+                
+                data.leaderboard.forEach((player, index) => {
+                    const row = `
+                        <tr class="${(index % 2 === 0) ? 'bg-gray-800' : 'bg-gray-700'}">
+                            <td class="py-2 px-3 font-bold">${index + 1}</td>
+                            <td class="py-2 px-3">${player.username}</td>
+                            <td class="py-2 px-3 text-right">${player.level}</td>
+                            <td class="py-2 px-3 text-right">${player.balance}</td>
+                            <td class="py-2 px-3 text-right">${player.xp}</td>
+                        </tr>
+                    `;
+                    leaderboardTableBody.insertAdjacentHTML('beforeend', row);
+                });
+            } else {
+                leaderboardTableBody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-gray-400">Наразі немає лідерів. Будь першим!</td></tr>';
+            }
+        } catch (error) {
+            console.error('[Leaderboard] Помилка при завантаженні дошки лідерів:', error);
+            leaderboardError.textContent = '🚫 Не вдалося зʼєднатись із сервером для завантаження дошки лідерів.';
+            leaderboardError.classList.remove('hidden');
+        } finally {
+            leaderboardLoading.classList.add('hidden');
+        }
+    });
+
+    // Закриття модалки дошки лідерів
+    leaderboardModal.querySelector('.close-button').addEventListener('click', () => {
+        console.log("[Leaderboard] Leaderboard modal close button clicked.");
+        leaderboardModal.classList.remove('active');
+    });
+} else {
+    console.error("[Leaderboard] Leaderboard button element not found! Ensure ID 'leaderboardButton' is correct in index.html.");
+}
 
 
 // =================================================================
@@ -589,7 +605,7 @@ spinButton.addEventListener('click', async () => {
             playLoseSoundEffect();
         }
     } catch (error) {
-        console.error('Помилка при спіні:', error);
+        console.error('[Spin] Помилка при спіні:', error);
         showCustomModal('🚫 Не вдалося зʼєднатись із сервером. Перевірте зʼєднання.', "Помилка");
         messageDiv.className = 'text-red-500 font-bold';
         playLoseSoundEffect();
@@ -603,17 +619,22 @@ spinButton.addEventListener('click', async () => {
 // 🚀 Початкове завантаження та перевірка аудіо
 // =================================================================
 window.onload = () => {
+    console.log("[Init] Window loaded.");
     // Включаємо аудіо контекст, якщо він ще не запущений
     if (Tone.context.state !== 'running') {
         audioPrompt.style.display = 'flex';
+        console.log("[Init] AudioContext not running, showing prompt.");
     } else {
         audioPrompt.style.display = 'none';
+        console.log("[Init] AudioContext already running, hiding prompt.");
     }
 
     // Завантажуємо дані користувача тільки якщо userId вже доступний
     if (userId) {
+        console.log("[Init] User ID available, updating balance and progress display.");
         updateBalanceAndProgressDisplay();
     } else {
+        console.warn("[Init] User ID not available, displaying Telegram launch message.");
         messageDiv.textContent = '⚠️ Будь ласка, запустіть гру через Telegram.';
         messageDiv.className = 'text-yellow-400';
     }
