@@ -22,42 +22,40 @@ const activateAudioButton = document.getElementById('activateAudioButton');
 const audioPrompt = document.getElementById('audioPrompt');
 
 // =================================================================
-// ⚙️ Глобальні Налаштування Гри
+// ⚙️ Глобальні Налаштування Гри (Мають збігатися з бекендом main.py!)
 // =================================================================
 const SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀'];
-const WILD_SYMBOL = '⭐'; // Новий Wild символ
-const SCATTER_SYMBOL = '💰'; // Новий Scatter символ (для фріспінів)
+const WILD_SYMBOL = '⭐'; // Wild символ
+const SCATTER_SYMBOL = '💰'; // Scatter символ (для фріспінів або бонусів)
 
 const ALL_REEL_SYMBOLS = [...SYMBOLS, WILD_SYMBOL, SCATTER_SYMBOL]; // Всі символи на барабанах
 
 const BET_AMOUNT = 100;
-const REEL_HEIGHT_PX = 100; // Висота одного символу на барабані (з CSS)
+const REEL_HEIGHT_PX = 100; // Висота одного символу на барабані у пікселях (з CSS)
 const REEL_SPIN_CYCLES = 5; // Кількість повних прокруток барабанів перед зупинкою
 const REEL_SPIN_DURATION_BASE = 0.8; // Базова тривалість обертання одного барабана
 const REEL_STOP_DURATION = 1.0; // Тривалість зупинки від верхньої точки до фінального символу
 const REEL_STOP_EASE = "power2.out"; // Ефект плавного зупинення
 const REEL_STOP_STAGGER = 0.2; // Затримка між зупинками барабанів (перший, потім другий, потім третій)
 
-// XP та Рівні
-const XP_PER_SPIN = 10;
-const XP_PER_WIN_MULTIPLIER = 2; // XP за виграш = XP_PER_SPIN * XP_PER_WIN_MULTIPLIER
+// XP та Рівні (Мають збігатися з бекендом main.py!)
 const LEVEL_THRESHOLDS = [
-    0,    // Level 1
-    100,  // Level 2
-    300,  // Level 3
-    600,  // Level 4
-    1000, // Level 5
-    1500, // Level 6
-    2200, // Level 7
-    3000, // Level 8
-    4000, // Level 9
-    5500, // Level 10
-    7500, // Level 11
-    10000 // Level 12 (and beyond)
+    0,    // Level 1: 0 XP
+    100,  // Level 2: 100 XP
+    300,  // Level 3: 300 XP
+    600,  // Level 4: 600 XP
+    1000, // Level 5: 1000 XP
+    1500, // Level 6: 1500 XP
+    2200, // Level 7: 2200 XP
+    3000, // Level 8: 3000 XP
+    4000, // Level 9: 4000 XP
+    5500, // Level 10: 5500 XP
+    7500, // Level 11: 7500 XP
+    10000 // Level 12: 10000 XP
 ];
 
-const DAILY_BONUS_AMOUNT = 500;
-const DAILY_BONUS_COOLDOWN_HOURS = 24;
+const DAILY_BONUS_AMOUNT = 300; // Ця сума має збігатися з бекендом
+const DAILY_BONUS_COOLDOWN_HOURS = 24; // Цей кулдаун має збігатися з бекендом
 
 // =================================================================
 // 🧠 Ініціалізація Telegram WebApp
@@ -139,12 +137,13 @@ async function setupSounds() {
 
 // Запускаємо ініціалізацію звуків після першої взаємодії користувача
 window.addEventListener('click', () => setupSounds(), { once: true });
-window.addEventListener('touchstart', () => setupSounds(), { once: true }); // Для мобільних пристроїв
+window.addEventListener('touchstart', () => setupSounds(), { once: true }); // For mobile devices
 
 // Активація аудіо через кнопку (якщо автозапуск заблоковано)
 activateAudioButton.addEventListener('click', async () => {
     await setupSounds();
 });
+
 
 function playSpinStartSound() { if (spinStartSound && Tone.context.state === 'running') spinStartSound.triggerAttackRelease("C4", "8n"); }
 function playReelStopSound(note = "D4") { if (reelStopSound && Tone.context.state === 'running') reelStopSound.triggerAttackRelease(note, "16n"); }
@@ -210,23 +209,22 @@ async function updateBalanceAndProgressDisplay() {
         }
 
         // Оновлення XP та Рівня
-        if (currentXP !== lastKnownUserXP || currentLevel !== lastKnownUserLevel) {
-            userLevelSpan.textContent = currentLevel;
-            userXpSpan.textContent = currentXP;
-            
-            const nextLevelThreshold = LEVEL_THRESHOLDS[currentLevel] || LEVEL_THRESHOLDS[LEVEL_THRESHOLDS.length - 1];
-            nextLevelXpSpan.textContent = nextLevelThreshold;
-            
-            const xpProgress = Math.min(100, (currentXP / nextLevelThreshold) * 100);
-            xpProgressBar.style.width = `${xpProgress}%`;
+        const nextLevelThreshold = LEVEL_THRESHOLDS[currentLevel] || LEVEL_THRESHOLDS[LEVEL_THRESHOLDS.length - 1]; // Забезпечуємо поріг для останнього рівня
+        
+        userLevelSpan.textContent = currentLevel;
+        userXpSpan.textContent = currentXP;
+        nextLevelXpSpan.textContent = nextLevelThreshold;
+        
+        const xpProgress = Math.min(100, (currentXP / nextLevelThreshold) * 100);
+        xpProgressBar.style.width = `${xpProgress}%`;
 
-            if (currentLevel > lastKnownUserLevel && lastKnownUserLevel !== 0) { // Перевірка на підвищення рівня, не при першому завантаженні
-                playLevelUpSound();
-                showCustomModal(`🎉 Ви досягли Рівня ${currentLevel}! 🎉`, "Підвищення Рівня!");
-            }
-            lastKnownUserXP = currentXP;
-            lastKnownUserLevel = currentLevel;
+        if (currentLevel > lastKnownUserLevel && lastKnownUserLevel !== 0) { // Перевірка на підвищення рівня, не при першому завантаженні
+            playLevelUpSound();
+            showCustomModal(`🎉 Ви досягли Рівня ${currentLevel}! 🎉`, "Підвищення Рівня!");
         }
+        lastKnownUserXP = currentXP;
+        lastKnownUserLevel = currentLevel;
+        
 
         // Оновлення стану кнопки щоденного бонусу
         updateDailyBonusButton(lastDailyClaim);
@@ -256,6 +254,8 @@ function updateDailyBonusButton(lastClaimTime) {
         const hours = Math.floor(timeLeft / (1000 * 60 * 60));
         const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
         dailyBonusCooldownSpan.textContent = `(${hours}год ${minutes}хв)`;
+        // Оновлювати таймер кожну хвилину
+        setTimeout(() => updateDailyBonusButton(lastClaimTime), (minutes % 1 === 0 ? 60 : (minutes % 1) * 60) * 1000); 
     }
 }
 
@@ -264,7 +264,7 @@ dailyBonusButton.addEventListener('click', async () => {
         showCustomModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб отримати User ID.', "Недоступно");
         return;
     }
-    if (dailyBonusButton.disabled) return;
+    if (dailyBonusButton.disabled) return; // Запобігти подвійному кліку
 
     dailyBonusButton.disabled = true;
     dailyBonusButton.classList.remove('pulsing');
@@ -286,14 +286,14 @@ dailyBonusButton.addEventListener('click', async () => {
         } else {
             showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка.'}`, "Помилка Бонусу");
             messageDiv.className = 'text-red-500 font-bold';
-            dailyBonusButton.disabled = false; // Вмикаємо кнопку, якщо виникла помилка
-            dailyBonusButton.classList.add('pulsing');
+            // Не вмикаємо кнопку одразу, щоб кулдаун спрацював
+            updateBalanceAndProgressDisplay(); // Оновити стан кнопки з врахуванням кулдауну
         }
     } catch (error) {
         console.error('Помилка при отриманні щоденного бонусу:', error);
         showCustomModal('🚫 Не вдалося зʼєднатись із сервером для бонусу.', "Помилка");
         messageDiv.className = 'text-red-500 font-bold';
-        dailyBonusButton.disabled = false;
+        dailyBonusButton.disabled = false; // Вмикаємо кнопку лише при справжній помилці мережі
         dailyBonusButton.classList.add('pulsing');
     }
 });
@@ -325,7 +325,7 @@ function animateReels(reels, finalSymbols) {
 
             // Анімація прокрутки для кожного барабана
             masterTimeline.to(reelContent, {
-                y: -((animationSymbols.length - 1) * REEL_HEIGHT_PX), // Прокрутка до кінця анімаційних символів
+                y: -(animationSymbols.length - 1) * REEL_HEIGHT_PX, // Прокрутка до кінця анімаційних символів
                 duration: REEL_SPIN_DURATION_BASE + (index * REEL_STOP_STAGGER), // Додаємо затримку до тривалості для послідовної зупинки
                 ease: "linear", // Лінійна швидкість під час прокрутки
                 onStart: () => {
@@ -422,9 +422,16 @@ spinButton.addEventListener('click', async () => {
 });
 
 // =================================================================
-// 🚀 Початкове завантаження
+// 🚀 Початкове завантаження та перевірка аудіо
 // =================================================================
 window.onload = () => {
+    // Спочатку перевіряємо, чи потрібно показати підказку для аудіо
+    if (Tone.context.state !== 'running') {
+        audioPrompt.style.display = 'flex';
+    } else {
+        audioPrompt.style.display = 'none';
+    }
+
     if (userId) {
         updateBalanceAndProgressDisplay(); // Оновлюємо баланс та прогрес
     } else {
