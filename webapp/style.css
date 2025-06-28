@@ -1,113 +1,239 @@
+/* Custom CSS for Slot Machine - complementing Tailwind for grand visuals */
+
+/* Import Inter font */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800;900&display=swap');
+
+/* Base Body Styles (Tailwind handles most, but define font here) */
 body {
-    font-family: Arial, sans-serif;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    min-height: 100vh;
-    background-color: #282c34;
-    color: #fff;
-    margin: 0;
-    overflow: hidden;
+    font-family: 'Inter', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
-.container {
-    background-color: #3a3f47;
-    padding: 30px;
-    border-radius: 15px;
-    box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
-    text-align: center;
-    width: 90%;
-    max-width: 400px;
+/* Casino Frame - Outer Container Styling */
+.casino-frame {
+    /* Tailwind handles flex, margin, padding, rounded, shadow, border */
+    position: relative;
+    overflow: hidden; /* For decorative elements */
+    z-index: 10; /* Ensure it's above potential background animations */
 }
 
+/* Heading H1 */
 h1 {
-    color: #ffd700;
-    margin-bottom: 20px;
+    /* Tailwind handles text-size, font-weight, color, margin, drop-shadow */
+    line-height: 1.2;
 }
 
-.balance {
-    font-size: 1.2em;
-    margin-bottom: 20px;
-    color: #a0a0a0;
+/* Balance Display */
+.balance-area {
+    /* Tailwind handles flex, justify, align, rounded, padding, margin, shadow, border */
+    min-width: 280px; /* Ensure balance area is consistent */
 }
 
-#userBalance {
-    font-weight: bold;
-    color: #fff;
+/* XP Bar Styling */
+.xp-bar {
+    /* Tailwind handles width, bg, rounded, height */
+    overflow: hidden; /* Ensure progress bar stays within bounds */
+}
+#xpProgressBar {
+    /* Tailwind handles height, bg, rounded, transition */
+    transform-origin: left; /* Ensure animation grows from left */
+}
+/* Animation for balance update */
+@keyframes pulse-balance {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.05); opacity: 0.8; }
+    100% { transform: scale(1); opacity: 1; }
+}
+.animate-pulse-balance {
+    animation: pulse-balance 0.5s ease-out; /* Apply this class via JS */
 }
 
+/* Slot Machine Reels Container */
 .slot-machine {
-    display: flex;
-    justify-content: center;
-    gap: 10px;
-    margin-bottom: 30px;
-    perspective: 500px; /* Для 3D-ефекту при анімації */
+    /* Tailwind handles flex, justify, gap, margin, width, max-width, mx-auto */
+    perspective: 800px; /* Stronger 3D perspective for reel animations */
+    background-color: #0d0d1a; /* Darker background for reels section */
+    border-radius: 12px;
+    padding: 10px 5px;
+    box-shadow: inset 0 0 15px rgba(0,0,0,0.7), 0 0 20px rgba(255,204,0,0.5);
 }
 
+/* Individual Reel Styling */
 .reel {
-    width: 80px;
-    height: 80px;
-    background-color: #1a1e24;
-    border: 3px solid #ffd700;
-    border-radius: 10px;
-    display: flex;
-    justify-content: center;
+    /* Tailwind handles width, height, rounded, background, border, overflow, shadow, transform-gpu */
+    position: relative;
+    display: flex; /* Flexbox for centering inner content */
     align-items: center;
-    font-size: 3em;
-    font-weight: bold;
-    overflow: hidden;
-    color: #fff;
-    transition: transform 0.5s ease-out; /* Для плавного переходу */
-}
-
-button {
-    background-color: #4CAF50;
-    color: white;
-    padding: 15px 25px;
-    border: none;
+    justify-content: center;
+    box-shadow: inset 0 0 15px rgba(0,0,0,0.5), 0 0 10px rgba(255,204,0,0.3); /* Inner and outer glow */
     border-radius: 8px;
-    font-size: 1.2em;
-    cursor: pointer;
-    transition: background-color 0.3s ease;
+    transition: filter 0.1s ease-out; /* For quick blur changes */
+}
+
+/* Reel Content - The actual moving part inside the reel */
+.reel-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start; /* Start from top for animation */
     width: 100%;
+    height: auto; /* Height will be dynamically set by JS */
+    transform: translateY(0); /* Controlled by GSAP */
 }
 
-button:hover {
-    background-color: #45a049;
+/* Individual Symbol within the reel */
+.reel-symbol {
+    font-family: 'Inter', sans-serif;
+    font-size: 3.5em; /* Larger, more impactful symbols */
+    font-weight: 800; /* Extra bold */
+    height: 100px; /* Fixed height for each symbol for animation calculation */
+    line-height: 1; /* Remove extra line height */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    user-select: none; /* Prevent text selection */
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.7), 0 0 15px rgba(255,255,255,0.5); /* Glow effect for symbols */
+    transition: filter 0.2s ease; /* For blur effect */
 }
 
-button:disabled {
-    background-color: #666;
-    cursor: not-allowed;
+/* Spinning effect (blur) */
+.reel.spinning {
+    filter: blur(3px); /* Apply blur during rapid spin */
+}
+.reel.stopped {
+    filter: blur(0); /* Remove blur when stopped */
 }
 
+
+/* Spin Button Styling */
+.spin-button {
+    /* Tailwind handles background, text, font, padding, rounded, text-size, shadow, transition, transform */
+    letter-spacing: 0.05em; /* More spacious text */
+    position: relative;
+    overflow: hidden;
+    z-index: 1; /* Ensure glow/hover effects are above other elements */
+    min-height: 60px; /* Ensure consistent button height */
+}
+.spin-button:before {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 0;
+    height: 200%;
+    background: rgba(255,255,255,0.2);
+    transform: rotate(45deg);
+    transition: width 0.3s ease;
+    z-index: 1;
+}
+.spin-button:hover:before {
+    width: 200%;
+}
+.spin-button:active {
+    box-shadow: inset 0 2px 5px rgba(0,0,0,0.3); /* Press effect */
+}
+
+/* Daily Bonus Button */
+.daily-bonus-button {
+    min-height: 60px;
+    /* Tailwind handles most */
+    letter-spacing: 0.02em;
+}
+
+/* Message Area Styling */
 .message {
-    margin-top: 20px;
-    font-size: 1.1em;
-    color: #fff;
-    min-height: 25px; /* Щоб не "стрибало" при появі тексту */
+    /* Tailwind handles text-size, font-weight, margin, min-height, flex, align, justify, text-center */
+    word-wrap: break-word; /* Ensure long messages break correctly */
+    max-width: 90%; /* Prevent stretching on wide screens */
 }
-
 .win-message {
-    color: #00ff00;
+    /* Keyframes for shine are in JS, text styling is here */
+    font-size: 1.5em; /* Larger for wins */
+    text-shadow: 0 0 10px #00ff00, 0 0 20px #00ff00; /* Green glow */
+    color: #00ff00; /* Fallback for transparency */
+}
+.big-win-message {
+    font-size: 1.8em;
+    text-shadow: 0 0 15px #ffd700, 0 0 30px #ffd700;
+    background: linear-gradient(90deg, #ffd700, #ff8c00, #ffd700);
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: shine 2s infinite linear;
     font-weight: bold;
 }
-
 .lose-message {
-    color: #ff0000;
+    color: #ff4d4d; /* Softer red for loss */
     font-weight: bold;
 }
-
-/* Анімація спіна (можна зробити складнішою) */
-@keyframes spinReel {
-    0% { transform: translateY(0); }
-    25% { transform: translateY(-100%); }
-    50% { transform: translateY(0); }
-    75% { transform: translateY(-100%); }
-    100% { transform: translateY(0); }
+.info-message {
+    color: #a0a0a0; /* Grey for info */
 }
 
-/* Клас для застосування анімації */
-.spinning {
-    animation: spinReel 0.5s linear infinite; /* Швидка нескінченна анімація під час спіна */
+/* Modal Styling */
+.modal {
+    /* Tailwind for fixed, inset, flex, items-center, justify-center, z-index, bg */
+    /* display: hidden by default, JS toggles it */
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
 }
+.modal.active {
+    opacity: 1;
+    visibility: visible;
+}
+.modal-content {
+    /* Tailwind for bg, rounded, shadow, padding, text-center, width, max-width, border */
+    position: relative;
+    transform: translateY(-20px);
+    transition: transform 0.3s ease;
+}
+.modal.active .modal-content {
+    transform: translateY(0);
+}
+.close-button {
+    /* Tailwind for text, hover, font, size */
+    cursor: pointer;
+    position: absolute;
+    top: 10px;
+    right: 15px;
+    background: none;
+    border: none;
+    padding: 0;
+}
+.close-button:focus {
+    outline: none;
+}
+.modal-content button { /* Specific style for modal's OK button */
+    /* Tailwind handles most */
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+/* Audio Prompt Styles */
+.audio-prompt {
+    /* Tailwind handles position, inset, bg, flex, items, justify, rounded, text, p, z-index, hidden */
+    transition: opacity 0.3s ease;
+}
+.audio-prompt button {
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+}
+
+/* Keyframe animations for visual effects */
+/* Pulsing effect for spin button */
+@keyframes pulse {
+    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7); }
+    70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(76, 175, 80, 0); }
+    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
+}
+button.pulsing {
+    animation: pulse 1.5s infinite;
+}
+
+/* Shine effect for text (used in win-message) */
+@keyframes shine {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+

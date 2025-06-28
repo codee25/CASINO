@@ -2,24 +2,99 @@
 <html lang="uk">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Віртуальне Слот-Казино</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Імперія Слота: Віртуальне Казино</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Custom CSS -->
     <link rel="stylesheet" href="style.css">
+    <!-- GSAP CDN for advanced animations -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.9.1/gsap.min.js"></script>
+    <!-- Tone.js CDN for sound effects -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
+    <!-- Telegram WebApp Script -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
-<body>
-    <div class="container">
-        <h1>Віртуальне Слот-Казино</h1>
-        <div class="balance">
-            Ваш баланс: <span id="userBalance">0</span> фантиків
+<body class="flex items-center justify-center min-h-screen bg-gradient-to-br from-purple-900 via-gray-900 to-indigo-900 text-white p-4 overflow-hidden">
+
+    <div class="casino-frame relative w-full max-w-lg mx-auto bg-gray-900 rounded-3xl shadow-2xl p-6 md:p-8 border-4 border-yellow-500 transform transition-all duration-300 scale-95 md:scale-100">
+        <!-- Decorative top bar -->
+        <div class="absolute -top-4 left-1/2 transform -translate-x-1/2 w-48 h-8 bg-yellow-600 rounded-b-lg shadow-md flex items-center justify-center text-sm font-bold text-gray-900 uppercase tracking-widest">
+            Імперія Слота
         </div>
-        <div class="slot-machine">
-            <div class="reel" id="reel1">🍒</div>
-            <div class="reel" id="reel2">🍋</div>
-            <div class="reel" id="reel3">🍊</div>
+
+        <h1 class="text-4xl md:text-5xl font-extrabold text-yellow-400 mb-6 md:mb-8 drop-shadow-lg leading-tight">
+            Віртуальне Казино
+        </h1>
+
+        <!-- Balance and Level Display -->
+        <div class="balance-area bg-gray-700 rounded-xl py-3 px-6 mb-6 md:mb-8 flex flex-col justify-center items-center shadow-inner border border-gray-600">
+            <div class="flex justify-between items-center w-full mb-2">
+                <span class="text-lg md:text-xl text-gray-300 font-medium">Ваш баланс:</span>
+                <span id="userBalance" class="font-bold text-yellow-300 text-3xl md:text-4xl animate-pulse-balance">0</span>
+                <span class="text-lg md:text-xl text-gray-300 font-medium ml-2">фантиків</span>
+            </div>
+            <div class="level-progress w-full mt-2">
+                <div class="flex justify-between items-center text-sm text-gray-400 mb-1">
+                    <span>Рівень: <span id="userLevel" class="font-bold text-white">1</span></span>
+                    <span>XP: <span id="userXp" class="font-bold text-white">0</span>/<span id="nextLevelXp" class="font-bold text-white">100</span></span>
+                </div>
+                <div class="xp-bar w-full bg-gray-600 rounded-full h-3">
+                    <div id="xpProgressBar" class="h-full bg-blue-500 rounded-full transition-all duration-300 ease-out" style="width: 0%;"></div>
+                </div>
+            </div>
         </div>
-        <button id="spinButton">Крутити! (Ставка: 100)</button>
-        <div id="message" class="message"></div>
+
+        <!-- Slot Machine Reels -->
+        <div class="slot-machine flex justify-center gap-2 md:gap-4 mb-8 md:mb-10 w-full max-w-sm mx-auto relative">
+            <!-- Decorative light bar above reels -->
+            <div class="absolute -top-4 left-0 w-full h-4 bg-gradient-to-r from-yellow-400 to-red-500 rounded-t-lg shadow-lg"></div>
+            <!-- Reel 1 -->
+            <div id="reel1" class="reel relative w-28 h-28 md:w-32 md:h-32 rounded-lg bg-gray-800 border-4 border-yellow-500 overflow-hidden shadow-inner transform-gpu">
+                <div class="reel-content absolute top-0 left-0 w-full h-full"></div>
+            </div>
+            <!-- Reel 2 -->
+            <div id="reel2" class="reel relative w-28 h-28 md:w-32 md:h-32 rounded-lg bg-gray-800 border-4 border-yellow-500 overflow-hidden shadow-inner transform-gpu">
+                <div class="reel-content absolute top-0 left-0 w-full h-full"></div>
+            </div>
+            <!-- Reel 3 -->
+            <div id="reel3" class="reel relative w-28 h-28 md:w-32 md:h-32 rounded-lg bg-gray-800 border-4 border-yellow-500 overflow-hidden shadow-inner transform-gpu">
+                <div class="reel-content absolute top-0 left-0 w-full h-full"></div>
+            </div>
+            <!-- Decorative light bar below reels -->
+            <div class="absolute -bottom-4 left-0 w-full h-4 bg-gradient-to-r from-red-500 to-yellow-400 rounded-b-lg shadow-lg"></div>
+        </div>
+
+        <!-- Game Controls -->
+        <div class="game-controls flex flex-col md:flex-row gap-4 mb-6 md:mb-8">
+            <button id="spinButton" class="spin-button bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-extrabold py-4 px-8 rounded-full text-xl md:text-2xl shadow-xl transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 w-full uppercase tracking-wider pulsing flex items-center justify-center">
+                Крутити! (Ставка: 100)
+            </button>
+            <button id="dailyBonusButton" class="daily-bonus-button bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-bold py-3 px-6 rounded-full text-lg shadow-lg transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex items-center justify-center whitespace-nowrap">
+                Щоденний Бонус <span id="dailyBonusCooldown" class="ml-2 text-sm text-blue-200"></span>
+            </button>
+        </div>
+        
+        <div id="message" class="message text-lg md:text-xl font-semibold mt-6 min-h-[40px] flex items-center justify-center text-center">
+            <!-- Messages will appear here -->
+        </div>
+
+        <!-- Audio Context Activation Prompt -->
+        <div id="audioPrompt" class="audio-prompt absolute inset-0 bg-gray-900 bg-opacity-95 flex flex-col items-center justify-center rounded-3xl text-center p-8 z-20 hidden">
+            <p class="text-xl md:text-2xl font-bold mb-4">Натисніть, щоб увімкнути звук</p>
+            <button id="activateAudioButton" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-full text-lg shadow-lg transition-all duration-300 ease-in-out">
+                Увімкнути
+            </button>
+        </div>
+    </div>
+
+    <!-- Custom Modal for Alerts -->
+    <div id="customModal" class="modal fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-70 hidden">
+        <div class="modal-content bg-gray-800 rounded-xl shadow-2xl p-6 md:p-8 text-center w-11/12 max-w-sm relative border-2 border-yellow-400">
+            <button class="close-button absolute top-2 right-4 text-gray-400 hover:text-white text-3xl font-bold transition-colors duration-200" onclick="document.getElementById('customModal').style.display='none'">&times;</button>
+            <p id="modalMessage" class="text-xl md:text-2xl font-semibold mb-4"></p>
+            <button class="bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold py-2 px-6 rounded-full text-lg shadow-md transition-all duration-300" onclick="document.getElementById('customModal').style.display='none'">OK</button>
+        </div>
     </div>
 
     <script src="script.js"></script>
