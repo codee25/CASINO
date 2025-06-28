@@ -92,7 +92,7 @@ def get_xp_for_next_level(level):
 PAYOUTS = {
     # Три однакові (включаючи Wild, що діє як замінник)
     ('🍒', '🍒', '🍒'): 1000,
-    ('🍋', '🍋', '🍋'): 800,
+    ('�', '🍋', '🍋'): 800,
     ('🍊', '🍊', '🍊'): 600,
     ('🍇', '🍇', '🍇'): 400,
     ('🔔', '🔔', '🔔'): 300,
@@ -146,7 +146,7 @@ def init_db():
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
-                username TEXT DEFAULT 'Unnamed Player', -- Додано username
+                username TEXT DEFAULT 'Unnamed Player',
                 balance INTEGER DEFAULT 1000,
                 xp INTEGER DEFAULT 0,
                 level INTEGER DEFAULT 1,
@@ -158,7 +158,6 @@ def init_db():
         conn.commit()
         logger.info("Table 'users' initialized or already exists.")
 
-        # Міграції для додавання стовпців, якщо вони не існують
         migrations_to_add = [
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT DEFAULT 'Unnamed Player';",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS xp INTEGER DEFAULT 0;",
@@ -197,7 +196,6 @@ def get_user_data(user_id):
         )
         result = cursor.fetchone()
         if result:
-            # Перетворюємо naive datetime об'єкти на aware (UTC)
             last_free_coins_claim_db = result[4]
             if last_free_coins_claim_db and last_free_coins_claim_db.tzinfo is None:
                 last_free_coins_claim_db = last_free_coins_claim_db.replace(tzinfo=timezone.utc)
@@ -220,9 +218,6 @@ def get_user_data(user_id):
                 'last_quick_bonus_claim': last_quick_bonus_claim_db
             }
         else:
-            # Створення нового користувача з дефолтними значеннями
-            # Якщо користувач запустив бота вперше, username може бути взятий з Telegram.WebApp.initDataUnsafe.user.username
-            # Але для простоти тут використовуємо дефолт. Фронтенд може передати username при першому зверненні.
             cursor.execute(
                 'INSERT INTO users (user_id, username, balance, xp, level, last_free_coins_claim, last_daily_bonus_claim, last_quick_bonus_claim) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)', 
                 (user_id, 'Unnamed Player', 1000, 0, 1, None, None, None)
@@ -259,9 +254,8 @@ def update_user_data(user_id, **kwargs):
         update_fields_parts = []
         update_values = []
 
-        # Заповнюємо значення для оновлення
         fields_to_update = {
-            'username': kwargs.get('username', current_data_from_db['username']), # Додано username
+            'username': kwargs.get('username', current_data_from_db['username']),
             'balance': kwargs.get('balance', current_data_from_db['balance']),
             'xp': kwargs.get('xp', current_data_from_db['xp']),
             'level': kwargs.get('level', current_data_from_db['level']),
@@ -299,12 +293,10 @@ def check_win_conditions(symbols):
     winnings = 0
     s1, s2, s3 = symbols
 
-    # --- Перевірка Scatter виграшів (пріоритет над іншими) ---
     scatter_count = symbols.count(SCATTER_SYMBOL)
     if scatter_count >= 2:
         return PAYOUTS.get(tuple([SCATTER_SYMBOL] * scatter_count), 0)
 
-    # --- Перевірка виграшів для 3 однакових символів (з Wild) ---
     if s1 == WILD_SYMBOL and s2 == WILD_SYMBOL and s3 == WILD_SYMBOL:
         return PAYOUTS.get(('⭐', '⭐', '⭐'), 0)
 
@@ -317,24 +309,24 @@ def check_win_conditions(symbols):
         if current_match_count == 3:
             return PAYOUTS.get((main_symbol, main_symbol, main_symbol), 0)
 
-    # --- Перевірка виграшів для 2 однакових символів (з Wild) ---
     for main_symbol in SYMBOLS:
-        # s1, s2 - s3 не match
+        # Check for 2 matching symbols (including wild) and 1 non-matching/non-wild/non-scatter
+        # s1, s2 matching, s3 not
         if ((s1 == main_symbol or s1 == WILD_SYMBOL) and 
             (s2 == main_symbol or s2 == WILD_SYMBOL) and
-            (s3 != main_symbol and s3 != WILD_SYMBOL and s3 != SCATTER_SYMBOL)):
+            (s3 not in [main_symbol, WILD_SYMBOL, SCATTER_SYMBOL])):
             return PAYOUTS.get((main_symbol, main_symbol), 0)
         
-        # s1, s3 - s2 не match
+        # s1, s3 matching, s2 not
         if ((s1 == main_symbol or s1 == WILD_SYMBOL) and 
             (s3 == main_symbol or s3 == WILD_SYMBOL) and
-            (s2 != main_symbol and s2 != WILD_SYMBOL and s2 != SCATTER_SYMBOL)):
+            (s2 not in [main_symbol, WILD_SYMBOL, SCATTER_SYMBOL])):
             return PAYOUTS.get((main_symbol, main_symbol), 0)
         
-        # s2, s3 - s1 не match
+        # s2, s3 matching, s1 not
         if ((s2 == main_symbol or s2 == WILD_SYMBOL) and 
             (s3 == main_symbol or s3 == WILD_SYMBOL) and
-            (s1 != main_symbol and s1 != WILD_SYMBOL and s1 != SCATTER_SYMBOL)):
+            (s1 not in [main_symbol, WILD_SYMBOL, SCATTER_SYMBOL])):
             return PAYOUTS.get((main_symbol, main_symbol), 0)
             
     return winnings
@@ -381,19 +373,21 @@ def spin_slot(user_id):
 @dp.message(CommandStart())
 async def send_welcome(message: Message):
     user_id = message.from_user.id
-    # Оновлюємо username, якщо він доступний через initDataUnsafe (з telegram-web-app.js)
-    # Це припускає, що фронтенд передав username при запиті /api/get_balance або іншому.
-    # Для команди /start, username береться з message.from_user.
-    user_data = get_user_data(user_id) # Це створить користувача, якщо його немає
-    if message.from_user.username and user_data['username'] == 'Unnamed Player':
+    init_db()
+    # При стартовій команді, якщо username доступний, оновлюємо його в БД
+    user_data = get_user_data(user_id)
+    if message.from_user.username: # Перевага username
         update_user_data(user_id, username=message.from_user.username)
-
+    elif message.from_user.first_name: # Або first_name
+        update_user_data(user_id, username=message.from_user.first_name)
+    # Якщо нічого немає, залишиться "Unnamed Player"
+    
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎰 Відкрити Слот-Казино 🎰", web_app=WebAppInfo(url=WEB_APP_URL))]
     ])
 
     await message.reply(
-        f"Привіт, {message.from_user.first_name}!\n"
+        f"Привіт, {message.from_user.first_name if message.from_user.first_name else 'гравець'}!\n"
         f"Ласкаво просимо до віртуального Слот-Казино!\n"
         f"Ваш поточний баланс: {user_data['balance']} фантиків.\n"
         f"Натисніть кнопку нижче, щоб почати грати!",
@@ -466,16 +460,15 @@ async def get_free_coins_command(message: Message):
 async def api_get_balance(request: Request):
     data = await request.json()
     user_id = data.get('user_id')
-    # Додано отримання username з запиту для оновлення
-    username = data.get('username', 'Unnamed Player') 
+    username = data.get('username', 'Unnamed Player')
 
     if not user_id:
         logger.warning("api_get_balance: User ID is missing in request.")
         return json_response({'error': 'User ID is required'}, status=400)
     
-    # Оновлюємо username користувача при кожному запиті балансу, якщо він змінився або не встановлений
+    # Оновлюємо username користувача при кожному запиті балансу
     current_user_data = get_user_data(user_id)
-    if current_user_data['username'] == 'Unnamed Player' or current_user_data['username'] != username:
+    if current_user_data['username'] == 'Unnamed Player' or (username and current_user_data['username'] != username):
          update_user_data(user_id, username=username)
 
     user_data = get_user_data(user_id)
@@ -518,13 +511,20 @@ async def api_claim_daily_bonus(request: Request):
 
     if last_claim_time and (current_time - last_claim_time) < cooldown_duration:
         time_left = cooldown_duration - (current_time - last_claim_time)
-        hours = int(time_left.total_seconds() // 3600)
-        minutes = int((time_left.total_seconds() % 3600) // 60)
+        minutes = int(time_left.total_seconds() // 60)
         seconds = int(time_left.total_seconds() % 60)
-        return json_response(
-            {'error': f"Будь ласка, зачекайте {hours:02d}:{minutes:02d}:{seconds:02d} до наступного бонусу."}, 
-            status=403
-        )
+        # Повідомлення про помилку тепер також у форматі MM:SS або HH:MM:SS
+        if time_left.total_seconds() >= 3600: # Якщо більше години
+            hours = int(time_left.total_seconds() // 3600)
+            return json_response(
+                {'error': f"Будь ласка, зачекайте {hours:02d}:{minutes:02d}:{seconds:02d} до наступного бонусу."}, 
+                status=403
+            )
+        else:
+            return json_response(
+                {'error': f"Будь ласка, зачекайте {minutes:02d}:{seconds:02d} до наступного бонусу."}, 
+                status=403
+            )
     else:
         new_balance = user_data['balance'] + DAILY_BONUS_AMOUNT
         update_user_data(user_id, balance=new_balance, last_daily_bonus_claim=current_time)
@@ -563,15 +563,15 @@ async def api_get_leaderboard(request: Request):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        # Сортуємо за XP (спадаючою), потім за балансом (спадаючою)
         cursor.execute(
-            'SELECT username, level, balance, xp FROM users ORDER BY xp DESC, balance DESC LIMIT 100;' # Обмеження до 100 лідерів
+            'SELECT username, level, balance, xp, user_id FROM users ORDER BY xp DESC, balance DESC LIMIT 100;'
         )
         results = cursor.fetchall()
         leaderboard = []
         for row in results:
+            username = row[0] if row[0] != 'Unnamed Player' else f"Гравець {str(row[4])[-4:]}" # Показувати останні 4 цифри ID для анонімних
             leaderboard.append({
-                'username': row[0],
+                'username': username,
                 'level': row[1],
                 'balance': row[2],
                 'xp': row[3]
@@ -606,7 +606,7 @@ app_aiohttp.router.add_post('/api/get_balance', api_get_balance, name='api_get_b
 app_aiohttp.router.add_post('/api/spin', api_spin, name='api_spin')
 app_aiohttp.router.add_post('/api/claim_daily_bonus', api_claim_daily_bonus, name='api_claim_daily_bonus')
 app_aiohttp.router.add_post('/api/claim_quick_bonus', api_claim_quick_bonus, name='api_claim_quick_bonus')
-app_aiohttp.router.add_post('/api/get_leaderboard', api_get_leaderboard, name='api_get_leaderboard') # НОВИЙ ЕНДПОІНТ
+app_aiohttp.router.add_post('/api/get_leaderboard', api_get_leaderboard, name='api_get_leaderboard')
 
 # Налаштовуємо CORS для дозволу запитів з Web App URL
 cors = aiohttp_cors.setup(app_aiohttp, defaults={

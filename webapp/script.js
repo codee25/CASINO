@@ -572,7 +572,7 @@ spinButton.addEventListener('click', async () => {
             }
         } else {
             showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка сервера.'}`, "Помилка Спіна");
-            messageDiv.className = 'message lose-message text-red-500 font-bold';
+            messageDiv.className = 'text-red-500 font-bold';
             playLoseSoundEffect();
         }
     } catch (error) {
@@ -605,4 +605,3 @@ window.onload = () => {
         messageDiv.className = 'text-yellow-400';
     }
 };
-

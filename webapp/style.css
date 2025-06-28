@@ -35,22 +35,30 @@ html, body {
 .quick-bonus-button {
     /* Tailwind classes: absolute left-2 md:left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-blue-600 ... */
     box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-    overflow: visible; /* Allow countdown to overflow */
+    overflow: hidden; /* **CHANGE**: Set to hidden to contain timer inside or just on the edge */
+    position: relative; /* Ensure timer is positioned relative to this button */
 }
 
 /* Quick Bonus Countdown text - smaller, just numbers */
 .quick-bonus-countdown {
-    /* Tailwind classes: absolute -top-1 -right-1 bg-red-600 text-white text-xs px-1 py-0.5 rounded-full opacity-0 pointer-events-none transition-opacity duration-200 */
+    /* Adjusted positioning to be inside the button, centered at bottom or top-right corner */
+    position: absolute;
+    bottom: 0px; /* Position at the very bottom inside the button */
+    left: 0;
+    right: 0; /* Span full width to center text */
+    text-align: center; /* Center the text */
+    background-color: rgba(0,0,0,0.7); /* Darker background for contrast */
+    color: white;
     font-size: 0.6rem; /* Зменшений розмір шрифту */
     font-weight: bold;
-    min-width: 2.5rem; /* Ensure it has some width for single digit/letter */
-    text-align: center;
-    line-height: 1; /* Adjust line height to fit text in small circle */
+    padding: 1px 0px; /* Minimal padding, no horizontal padding */
+    border-radius: 0 0 9999px 9999px; /* Rounded bottom only */
     white-space: nowrap; /* Prevent countdown from wrapping */
-    transform: translate(0, -50%); /* Adjust position for better visibility - changed translate */
-    right: 0; /* Align to the right edge of the button */
-    padding: 2px 4px; /* More padding for visibility */
-    box-sizing: border-box; /* Include padding in width/height calculation */
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    pointer-events: none;
+    min-width: unset; /* Remove min-width */
+    line-height: 1.2; /* Adjust line height to fit */
 }
 .quick-bonus-button.active-countdown .quick-bonus-countdown {
     opacity: 1; /* Show when countdown is active */
@@ -60,12 +68,20 @@ html, body {
 .leaderboard-button {
     /* Tailwind classes: absolute right-2 md:right-4 top-1/2 -translate-y-1/2 bg-yellow-500 ... */
     box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+    /* Make it round and remove text */
+    width: 48px; /* Same as quick bonus button */
+    height: 48px; /* Same as quick bonus button */
+    padding: 0; /* Remove padding from icon-only button */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem; /* Larger font for icon */
+    line-height: 1; /* Adjust line height for single icon */
 }
 
 /* Main Game Content Area - this is the flexible area that holds all game elements */
 .game-content-fixed {
     /* Tailwind classes: flex-grow flex flex-col items-center justify-around p-4 md:p-8 w-full */
-    /* flex-grow allows it to take remaining vertical space */
     overflow-y: hidden; /* Prevent scrolling here */
     justify-content: space-around; /* Distribute space evenly */
     padding-top: 1rem; /* Adjust padding to avoid header overlap */
