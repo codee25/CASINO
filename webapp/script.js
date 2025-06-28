@@ -81,11 +81,12 @@ if (typeof Telegram !== 'undefined' && Telegram.WebApp && Telegram.WebApp.initDa
     spinButton.classList.remove('pulsing');
     dailyBonusButton.disabled = true;
     quickBonusButton.disabled = true;
-    leaderboardButton.disabled = true;
+    leaderboardButton.disabled = true; // Вимкнути кнопку лідерів, якщо WebApp не ініціалізовано
 }
 
 // 🌐 URL бекенду (твій актуальний Render URL)
-const API_BASE_URL = 'https://casino-0h0l.onrender.com';
+const API_BASE_URL = 'https://casino-0h0l.onrender.com'; // <<<< ОНОВІТЬ ЦЕЙ URL!
+
 
 // =================================================================
 // 🔊 Ініціалізація звукових ефектів (Tone.js)
@@ -125,7 +126,7 @@ async function setupSounds() {
         } catch (e) {
             console.error("Помилка ініціалізації аудіо:", e);
             audioPrompt.style.display = 'flex';
-            return; 
+            return;
         }
     } else {
         audioPrompt.style.display = 'none';
@@ -425,10 +426,11 @@ quickBonusButton.addEventListener('click', async () => {
 // 🏆 Логіка Дошки Лідерів
 // =================================================================
 leaderboardButton.addEventListener('click', async () => {
+    console.log("Leaderboard button clicked."); // Лог для перевірки натискання кнопки
     leaderboardTableBody.innerHTML = ''; // Очистити попередні дані
     leaderboardLoading.classList.remove('hidden'); // Показати завантаження
     leaderboardError.classList.add('hidden'); // Приховати помилку
-    leaderboardModal.classList.add('active'); // Показати модалку
+    leaderboardModal.classList.add('active'); // Показати модалку (додаємо клас 'active')
 
     try {
         const response = await fetch(`${API_BASE_URL}/api/get_leaderboard`, {
@@ -437,20 +439,25 @@ leaderboardButton.addEventListener('click', async () => {
             body: JSON.stringify({}) // Немає необхідності передавати user_id для дошки лідерів
         });
 
+        console.log("Leaderboard API response status:", response.status); // Лог статусу відповіді
+
         if (!response.ok) {
             const errData = await response.json();
+            console.error("Leaderboard API error data:", errData); // Лог даних помилки
             leaderboardError.textContent = `Помилка: ${errData.error || 'Невідома помилка при завантаженні лідерів.'}`;
             leaderboardError.classList.remove('hidden');
             return;
         }
 
         const data = await response.json();
+        console.log("Leaderboard data received:", data); // Лог отриманих даних
+
         if (data.leaderboard && data.leaderboard.length > 0) {
             data.leaderboard.forEach((player, index) => {
                 const row = `
                     <tr class="${(index % 2 === 0) ? 'bg-gray-800' : 'bg-gray-700'}">
-                        <td class="py-2 px-3">${index + 1}</td>
-                        <td class="py-2 px-3">${player.username || `Гравець ${player.user_id}`}</td>
+                        <td class="py-2 px-3 font-bold">${index + 1}</td>
+                        <td class="py-2 px-3">${player.username}</td>
                         <td class="py-2 px-3 text-right">${player.level}</td>
                         <td class="py-2 px-3 text-right">${player.balance}</td>
                         <td class="py-2 px-3 text-right">${player.xp}</td>
@@ -462,12 +469,18 @@ leaderboardButton.addEventListener('click', async () => {
             leaderboardTableBody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-gray-400">Наразі немає лідерів. Будь першим!</td></tr>';
         }
     } catch (error) {
-        console.error('Помилка при завантаженні дошки лідерів:', error);
+        console.error('Помилка при завантаженні дошки лідерів:', error); // Лог помилки мережі/парсингу
         leaderboardError.textContent = '🚫 Не вдалося зʼєднатись із сервером для завантаження дошки лідерів.';
         leaderboardError.classList.remove('hidden');
     } finally {
         leaderboardLoading.classList.add('hidden');
     }
+});
+
+// Закриття модалки дошки лідерів
+leaderboardModal.querySelector('.close-button').addEventListener('click', () => {
+    console.log("Leaderboard modal close button clicked.");
+    leaderboardModal.classList.remove('active'); // Видалити клас 'active' для приховування
 });
 
 

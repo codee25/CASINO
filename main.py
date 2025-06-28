@@ -92,9 +92,9 @@ def get_xp_for_next_level(level):
 PAYOUTS = {
     # Три однакові (включаючи Wild, що діє як замінник)
     ('🍒', '🍒', '🍒'): 1000,
-    ('�', '🍋', '🍋'): 800,
+    ('🍋', '🍋', '🍋'): 800,
     ('🍊', '🍊', '🍊'): 600,
-    ('🍇', '🍇', '🍇'): 400,
+    ('�', '🍇', '🍇'): 400,
     ('🔔', '🔔', '🔔'): 300,
     ('💎', '💎', '💎'): 200,
     ('🍀', '🍀', '🍀'): 150,
@@ -347,7 +347,7 @@ def spin_slot(user_id):
     xp_gained = XP_PER_SPIN
     if winnings > 0:
         xp_gained += (XP_PER_SPIN * XP_PER_WIN_MULTIPLIER)
-        logger.info(f"User {user_id} won {winnings}. Symbols: {result_symbols}")
+        logger.info(f"User {user_id} won {winnings}.")
     else:
         logger.info(f"User {user_id} lost on spin. Symbols: {result_symbols}")
     
@@ -374,13 +374,11 @@ def spin_slot(user_id):
 async def send_welcome(message: Message):
     user_id = message.from_user.id
     init_db()
-    # При стартовій команді, якщо username доступний, оновлюємо його в БД
     user_data = get_user_data(user_id)
-    if message.from_user.username: # Перевага username
+    if message.from_user.username:
         update_user_data(user_id, username=message.from_user.username)
-    elif message.from_user.first_name: # Або first_name
+    elif message.from_user.first_name:
         update_user_data(user_id, username=message.from_user.first_name)
-    # Якщо нічого немає, залишиться "Unnamed Player"
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎰 Відкрити Слот-Казино 🎰", web_app=WebAppInfo(url=WEB_APP_URL))]
@@ -466,7 +464,6 @@ async def api_get_balance(request: Request):
         logger.warning("api_get_balance: User ID is missing in request.")
         return json_response({'error': 'User ID is required'}, status=400)
     
-    # Оновлюємо username користувача при кожному запиті балансу
     current_user_data = get_user_data(user_id)
     if current_user_data['username'] == 'Unnamed Player' or (username and current_user_data['username'] != username):
          update_user_data(user_id, username=username)
@@ -513,8 +510,7 @@ async def api_claim_daily_bonus(request: Request):
         time_left = cooldown_duration - (current_time - last_claim_time)
         minutes = int(time_left.total_seconds() // 60)
         seconds = int(time_left.total_seconds() % 60)
-        # Повідомлення про помилку тепер також у форматі MM:SS або HH:MM:SS
-        if time_left.total_seconds() >= 3600: # Якщо більше години
+        if time_left.total_seconds() >= 3600:
             hours = int(time_left.total_seconds() // 3600)
             return json_response(
                 {'error': f"Будь ласка, зачекайте {hours:02d}:{minutes:02d}:{seconds:02d} до наступного бонусу."}, 
@@ -569,9 +565,19 @@ async def api_get_leaderboard(request: Request):
         results = cursor.fetchall()
         leaderboard = []
         for row in results:
-            username = row[0] if row[0] != 'Unnamed Player' else f"Гравець {str(row[4])[-4:]}" # Показувати останні 4 цифри ID для анонімних
+            username = row[0] # Початкове ім'я користувача
+            user_id_suffix = str(row[4])[-4:] # Останні 4 цифри User ID
+
+            # Логіка для відображення імені:
+            # Якщо ім'я "Unnamed Player", використовуємо "Гравець XXXX"
+            # Інакше використовуємо фактичний username з бази даних
+            if username == 'Unnamed Player':
+                display_username = f"Гравець {user_id_suffix}"
+            else:
+                display_username = username # Використовуємо фактичний username
+
             leaderboard.append({
-                'username': username,
+                'username': display_username, # Використовуємо display_username
                 'level': row[1],
                 'balance': row[2],
                 'xp': row[3]
@@ -598,6 +604,7 @@ async def on_shutdown_webhook(web_app: Application):
     """Викликається при завершенні роботи Aiohttp веб-сервера."""
     logger.warning('Shutting down bot and webhook...')
     await bot.delete_webhook()
+    logger.warning('Webhook deleted.')
 
 app_aiohttp = Application()
 
