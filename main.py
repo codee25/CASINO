@@ -17,7 +17,7 @@ from aiohttp.web import Application, json_response, Request
 import aiohttp_cors
 
 # --- Налаштування логування ---
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # --- Змінні середовища ---
@@ -60,29 +60,29 @@ DAILY_BONUS_COOLDOWN_HOURS = 24
 XP_PER_SPIN = 10
 XP_PER_WIN_MULTIPLIER = 2 
 LEVEL_THRESHOLDS = [
-    0,    # Level 1
-    100,  # Level 2
-    300,  # Level 3
-    600,  # Level 4
-    1000, # Level 5
-    1500, # Level 6
-    2200, # Level 7
-    3000, # Level 8
-    4000, # Level 9
-    5500, # Level 10
-    7500, # Level 11
-    10000 # Level 12 (and beyond)
+    0,    # Level 1: 0 XP
+    100,  # Level 2: 100 XP
+    300,  # Level 3: 300 XP
+    600,  # Level 4: 600 XP
+    1000, # Level 5: 1000 XP
+    1500, # Level 6: 1500 XP
+    2200, # Level 7: 2200 XP
+    3000, # Level 8: 3000 XP
+    4000, # Level 9: 4000 XP
+    5500, # Level 10: 5500 XP
+    7500, # Level 11: 7500 XP
+    10000 # Level 12: 10000 XP (and beyond)
 ]
 
 def get_level_from_xp(xp):
     """Визначає рівень користувача на основі досвіду."""
     for i, threshold in enumerate(LEVEL_THRESHOLDS):
         if xp < threshold:
-            return i # Поточний рівень (індекс + 1)
+            return i + 1 # Рівні починаються з 1, індекси з 0
     return len(LEVEL_THRESHOLDS) # Максимальний рівень, якщо XP перевищує всі пороги
 
 def get_xp_for_next_level(level):
-    """Повертає XP, необхідний для наступного рівня."""
+    """Повертає XP, необхідний для наступного рівня (або для поточного, якщо це останній)."""
     if level < len(LEVEL_THRESHOLDS):
         return LEVEL_THRESHOLDS[level] # Порог для наступного рівня
     return LEVEL_THRESHOLDS[-1] # Якщо максимальний рівень, повертає останній поріг
@@ -94,7 +94,7 @@ PAYOUTS = {
     ('🍊', '🍊', '🍊'): 600,
     ('🍇', '🍇', '🍇'): 400,
     ('🔔', '🔔', '🔔'): 300,
-    ('💎', '�', '💎'): 200,
+    ('💎', '💎', '💎'): 200,
     ('🍀', '🍀', '🍀'): 150,
     ('⭐', '⭐', '⭐'): 2000, # Високий виграш за три Wild
     
@@ -102,7 +102,7 @@ PAYOUTS = {
     ('🍒', '🍒'): 100,
     ('🍋', '🍋'): 80,
 
-    # Scatter виграші (не залежать від позиції, але для спрощення перевіряємо їх у spin_slot)
+    # Scatter виграші (не залежать від позиції)
     ('💰', '💰'): 200, # За 2 Scatter
     ('💰', '💰', '💰'): 500, # За 3 Scatter
 }
@@ -120,15 +120,20 @@ def get_db_connection():
             password=url.password,
             host=url.hostname,
             port=url.port,
-            sslmode='require'
+            sslmode='require',
+            # Важливо для довготривалих з'єднань
+            keepalives=1, 
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5
         )
         return conn
     except psycopg2.Error as err:
         logger.error(f"DB connection error: {err}")
-        raise
+        raise # Перевикидаємо, щоб Gunicorn знав про збій
     except Exception as e:
         logger.error(f"Unexpected error during DB connection: {e}")
-        raise
+        raise # Перевикидаємо
 
 def init_db():
     """Ініціалізує таблиці та виконує міграції для бази даних PostgreSQL."""
@@ -137,40 +142,39 @@ def init_db():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # 1. Створення таблиці users, якщо вона не існує (з базовими полями)
+        # 1. Створення таблиці users, якщо вона не існує
+        # Додано xp, level, last_free_coins_claim, last_daily_bonus_claim при створенні
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
                 balance INTEGER DEFAULT 1000,
                 xp INTEGER DEFAULT 0,
-                level INTEGER DEFAULT 1
+                level INTEGER DEFAULT 1,
+                last_free_coins_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+                last_daily_bonus_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL
             )
         ''')
         conn.commit()
         logger.info("Table 'users' initialized or already exists.")
 
-        # 2. Міграція: Додавання стовпця last_free_coins_claim, якщо його немає (для /get_coins)
-        try:
-            cursor.execute('''
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS last_free_coins_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL;
-            ''')
-            conn.commit()
-            logger.info("Column 'last_free_coins_claim' added or already exists.")
-        except psycopg2.ProgrammingError as e:
-            # Це може статися, якщо IF NOT EXISTS не спрацював через версію PostgreSQL
-            logger.warning(f"Failed to add column 'last_free_coins_claim' (might already exist or specific DB error): {e}")
-            conn.rollback() # Відкочуємо транзакцію на випадок помилки
+        # 2. Міграції для додавання стовпців, якщо вони вже існують у старих версіях
+        # Це для забезпечення зворотньої сумісності, якщо таблиця створена без цих полів раніше
+        migrations = [
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS xp INTEGER DEFAULT 0;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS level INTEGER DEFAULT 1;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_free_coins_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily_bonus_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL;"
+        ]
 
-        # 3. Міграція: Додавання стовпця last_daily_bonus_claim, якщо його немає (для щоденного бонусу)
-        try:
-            cursor.execute('''
-                ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily_bonus_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL;
-            ''')
-            conn.commit()
-            logger.info("Column 'last_daily_bonus_claim' added or already exists.")
-        except psycopg2.ProgrammingError as e:
-            logger.warning(f"Failed to add column 'last_daily_bonus_claim' (might already exist or specific DB error): {e}")
-            conn.rollback()
+        for mig_sql in migrations:
+            try:
+                cursor.execute(mig_sql)
+                conn.commit()
+                logger.info(f"Migration applied: {mig_sql.strip()}")
+            except psycopg2.ProgrammingError as e:
+                # Це може статися, якщо IF NOT EXISTS не спрацював через версію PostgreSQL
+                logger.warning(f"Migration failed (might already exist or specific DB error): {e} -> {mig_sql}")
+                conn.rollback() # Відкочуємо транзакцію на випадок помилки
 
         logger.info("DB schema migration checked.")
 
@@ -202,8 +206,8 @@ def get_user_data(user_id):
         else:
             # Якщо користувача немає, створити його з початковими значеннями
             cursor.execute(
-                'INSERT INTO users (user_id, balance, xp, level) VALUES (%s, %s, %s, %s)', 
-                (user_id, 1000, 0, 1)
+                'INSERT INTO users (user_id, balance, xp, level, last_free_coins_claim, last_daily_bonus_claim) VALUES (%s, %s, %s, %s, %s, %s)', 
+                (user_id, 1000, 0, 1, None, None)
             )
             conn.commit()
             return {
@@ -215,53 +219,65 @@ def get_user_data(user_id):
             }
     except Exception as e:
         logger.error(f"Error getting user data from PostgreSQL for {user_id}: {e}")
-        # Повернути дефолтні значення у випадку помилки
+        # Повернути дефолтні значення у випадку помилки, щоб додаток не падав
         return {'balance': 0, 'xp': 0, 'level': 1, 'last_free_coins_claim': None, 'last_daily_bonus_claim': None}
     finally:
         if conn:
             conn.close()
 
-def update_user_data(user_id, balance_change=0, xp_change=0, last_free_coins_claim=None, last_daily_bonus_claim=None):
-    """Оновлює дані користувача в базі даних PostgreSQL."""
+def update_user_data(user_id, balance=None, xp=None, level=None, last_free_coins_claim=None, last_daily_bonus_claim=None):
+    """Оновлює дані користувача в базі даних PostgreSQL. Приймає АБСОЛЮТНІ ЗНАЧЕННЯ."""
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Отримуємо поточні дані для розрахунку нового рівня
+        # Отримуємо поточні дані, щоб зберегти ті, які не оновлюються
         current_data = get_user_data(user_id)
-        current_xp = current_data['xp'] + xp_change
-        current_balance = current_data['balance'] + balance_change
-        current_level = get_level_from_xp(current_xp)
 
-        # Оновлюємо дані
+        update_fields = []
+        update_values = []
+
+        if balance is not None:
+            update_fields.append("balance = %s")
+            update_values.append(balance)
+        else:
+            update_values.append(current_data['balance']) # Якщо не надано, використовуємо поточне
+
+        if xp is not None:
+            update_fields.append("xp = %s")
+            update_values.append(xp)
+        else:
+            update_values.append(current_data['xp'])
+
+        if level is not None:
+            update_fields.append("level = %s")
+            update_values.append(level)
+        else:
+            update_values.append(current_data['level'])
+
+        if last_free_coins_claim is not None:
+            update_fields.append("last_free_coins_claim = %s")
+            update_values.append(last_free_coins_claim)
+        else:
+            update_values.append(current_data['last_free_coins_claim'])
+
+        if last_daily_bonus_claim is not None:
+            update_fields.append("last_daily_bonus_claim = %s")
+            update_values.append(last_daily_bonus_claim)
+        else:
+            update_values.append(current_data['last_daily_bonus_claim'])
+
+        # Завжди оновлюємо, якщо user_id існує
         update_query = sql.SQL('''
-            INSERT INTO users (user_id, balance, xp, level, last_free_coins_claim, last_daily_bonus_claim) 
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT (user_id) DO UPDATE SET 
-                balance = EXCLUDED.balance + %s, 
-                xp = EXCLUDED.xp + %s, 
-                level = %s,
-                last_free_coins_claim = COALESCE(EXCLUDED.last_free_coins_claim, users.last_free_coins_claim),
-                last_daily_bonus_claim = COALESCE(EXCLUDED.last_daily_bonus_claim, users.last_daily_bonus_claim)
-        ''')
-        
-        # Застосовуємо оновлення для last_free_coins_claim та last_daily_bonus_claim лише якщо вони надані
-        params = [user_id, current_balance, current_xp, current_level]
-        
-        # Обробка останніх бонусів
-        final_last_free_coins_claim = last_free_coins_claim if last_free_coins_claim is not None else current_data['last_free_coins_claim']
-        final_last_daily_bonus_claim = last_daily_bonus_claim if last_daily_bonus_claim is not None else current_data['last_daily_bonus_claim']
-        
-        params.extend([final_last_free_coins_claim, final_last_daily_bonus_claim])
-        
-        # Параметри для ON CONFLICT DO UPDATE
-        params.extend([balance_change, xp_change, current_level])
+            UPDATE users SET {fields} WHERE user_id = %s
+        ''').format(fields=sql.SQL(', ').join(map(sql.SQL, update_fields)))
 
+        update_values.append(user_id) # Додаємо user_id в кінець для WHERE
 
-        cursor.execute(update_query, params)
+        cursor.execute(update_query, update_values)
         conn.commit()
-        logger.info(f"User {user_id} data updated. Balance change: {balance_change}, XP change: {xp_change}.")
+        logger.info(f"User {user_id} data updated.")
     except Exception as e:
         logger.error(f"Error updating user data in PostgreSQL for {user_id}: {e}")
     finally:
@@ -270,7 +286,7 @@ def update_user_data(user_id, balance_change=0, xp_change=0, last_free_coins_cla
 
 
 def check_win_conditions(symbols):
-    """Перевіряє виграшні комбінації, враховуючи Wild."""
+    """Перевіряє виграшні комбінації, враховуючи Wild та Scatter."""
     winnings = 0
     # Розпаковуємо символи
     s1, s2, s3 = symbols
@@ -278,58 +294,66 @@ def check_win_conditions(symbols):
     # --- Перевірка Scatter виграшів ---
     scatter_count = symbols.count(SCATTER_SYMBOL)
     if scatter_count >= 2:
-        winnings += PAYOUTS.get(('💰', '💰', '💰') if scatter_count == 3 else ('💰', '💰'), 0)
-        logger.info(f"Scatter win detected: {scatter_count} scatters, winnings: {winnings}")
-        return winnings # Scatter виграші можуть бути незалежними
+        winnings_scatter = PAYOUTS.get(tuple([SCATTER_SYMBOL] * scatter_count), 0)
+        logger.info(f"Scatter win detected: {scatter_count} scatters, winnings: {winnings_scatter}")
+        return winnings_scatter # Scatter виграші є окремими
 
-    # --- Перевірка виграшів для 3 однакових символів ---
-    # Перевіряємо кожну можливу "основну" комбінацію (без Wild)
-    for main_symbol in SYMBOLS:
-        # Якщо всі 3 символи однакові або Wild
-        if ((s1 == main_symbol or s1 == WILD_SYMBOL) and
-            (s2 == main_symbol or s2 == WILD_SYMBOL) and
-            (s3 == main_symbol or s3 == WILD_SYMBOL)):
-            winnings = PAYOUTS.get((main_symbol, main_symbol, main_symbol), 0)
-            logger.info(f"3-of-a-kind win for {main_symbol} (with Wilds): {winnings}")
-            return winnings # Повертаємо, оскільки це найвищий пріоритет
+    # --- Перевірка виграшів для 3 однакових символів (з Wild) ---
+    for main_symbol in SYMBOLS: # Перевіряємо кожен ОСНОВНИЙ символ
+        match_count = 0
+        if s1 == main_symbol or s1 == WILD_SYMBOL: match_count += 1
+        if s2 == main_symbol or s2 == WILD_SYMBOL: match_count += 1
+        if s3 == main_symbol or s3 == WILD_SYMBOL: match_count += 1
 
-    # --- Перевірка виграшів для 2 однакових символів (лише перші два) ---
-    for main_symbol in SYMBOLS:
-        if ((s1 == main_symbol or s1 == WILD_SYMBOL) and 
-            (s2 == main_symbol or s2 == WILD_SYMBOL) and
-            s3 != main_symbol and s3 != WILD_SYMBOL): # Перевіряємо, що третій не такий самий
-            winnings = PAYOUTS.get((main_symbol, main_symbol), 0)
-            logger.info(f"2-of-a-kind win for {main_symbol} (with Wilds): {winnings}")
-            return winnings
+        if match_count == 3:
+            return PAYOUTS.get((main_symbol, main_symbol, main_symbol), 0)
+    
+    # --- Перевірка виграшів для 2 однакових символів (з Wild) ---
+    for main_symbol in SYMBOLS: # Перевіряємо кожен ОСНОВНИЙ символ
+        # Перевірка s1, s2
+        if (s1 == main_symbol or s1 == WILD_SYMBOL) and \
+           (s2 == main_symbol or s2 == WILD_SYMBOL) and \
+           (s3 != main_symbol and s3 != WILD_SYMBOL): # Третій символ НЕ має бути таким самим або Wild
+            return PAYOUTS.get((main_symbol, main_symbol), 0)
+        
+        # Перевірка s2, s3
+        if (s2 == main_symbol or s2 == WILD_SYMBOL) and \
+           (s3 == main_symbol or s3 == WILD_SYMBOL) and \
+           (s1 != main_symbol and s1 != WILD_SYMBOL): # Перший символ НЕ має бути таким самим або Wild
+            return PAYOUTS.get((main_symbol, main_symbol), 0)
 
-    return winnings
+    # Виграш за три Wild
+    if s1 == WILD_SYMBOL and s2 == WILD_SYMBOL and s3 == WILD_SYMBOL:
+        return PAYOUTS.get(('⭐', '⭐', '⭐'), 0)
 
+
+    return winnings # Якщо нічого не виграно
 
 def spin_slot(user_id):
     user_data = get_user_data(user_id)
     current_balance = user_data['balance']
     current_xp = user_data['xp']
-    current_level = user_data['level']
 
     if current_balance < BET_AMOUNT:
         return {'error': 'Недостатньо коштів для спіна!'}, current_balance
 
-    # Знімаємо ставку
-    update_user_data(user_id, balance_change=-BET_AMOUNT)
-
     result_symbols = [random.choice(ALL_REEL_SYMBOLS) for _ in range(3)]
     winnings = check_win_conditions(result_symbols) # Використовуємо нову функцію перевірки
 
+    # Розрахунок нового балансу та XP
+    new_balance = current_balance - BET_AMOUNT + winnings
     xp_gained = XP_PER_SPIN
     if winnings > 0:
-        update_user_data(user_id, balance_change=winnings)
         xp_gained += (XP_PER_SPIN * XP_PER_WIN_MULTIPLIER)
         logger.info(f"User {user_id} won {winnings}. Symbols: {result_symbols}")
     else:
         logger.info(f"User {user_id} lost on spin. Symbols: {result_symbols}")
+    
+    new_xp = current_xp + xp_gained
+    new_level = get_level_from_xp(new_xp)
 
-    # Оновлюємо XP та рівень
-    update_user_data(user_id, xp_change=xp_gained)
+    # Оновлюємо дані користувача в БД
+    update_user_data(user_id, balance=new_balance, xp=new_xp, level=new_level)
 
     final_user_data = get_user_data(user_id) # Отримуємо оновлені дані після спіна
     
@@ -337,8 +361,8 @@ def spin_slot(user_id):
         'symbols': result_symbols,
         'winnings': winnings,
         'new_balance': final_user_data['balance'],
-        'new_xp': final_user_data['xp'],
-        'new_level': final_user_data['level'],
+        'xp': final_user_data['xp'],
+        'level': final_user_data['level'],
         'next_level_xp': get_xp_for_next_level(final_user_data['level']) # Додаємо для фронтенду
     }, final_user_data['balance']
 
@@ -388,8 +412,9 @@ async def add_balance_command(message: Message):
         await message.reply("Невірна сума. Будь ласка, введіть число.")
         return
 
-    # Додавання фантиків
-    update_user_data(user_id, balance_change=amount)
+    current_user_data = get_user_data(user_id)
+    new_balance = current_user_data['balance'] + amount
+    update_user_data(user_id, balance=new_balance)
     updated_user_data = get_user_data(user_id)
 
     await message.reply(f"🎉 {amount} фантиків успішно додано! Ваш новий баланс: {updated_user_data['balance']} фантиків. 🎉")
@@ -414,7 +439,8 @@ async def get_free_coins_command(message: Message):
         )
         logger.info(f"User {user_id} tried to claim free coins but is on cooldown.")
     else:
-        update_user_data(user_id, balance_change=FREE_COINS_AMOUNT, last_free_coins_claim=current_time)
+        new_balance = user_data['balance'] + FREE_COINS_AMOUNT
+        update_user_data(user_id, balance=new_balance, last_free_coins_claim=current_time)
         updated_user_data = get_user_data(user_id)
         await message.reply(
             f"🎉 Вітаємо! Ви отримали {FREE_COINS_AMOUNT} безкоштовних фантиків!\n"
@@ -438,6 +464,8 @@ async def api_get_balance(request: Request):
         'xp': user_data['xp'],
         'level': user_data['level'],
         'next_level_xp': get_xp_for_next_level(user_data['level']),
+        # Часові позначки мають бути у форматі ISO 8601 для легкого парсингу на фронтенді
+        'last_free_coins_claim': user_data['last_free_coins_claim'].isoformat() if user_data['last_free_coins_claim'] else None,
         'last_daily_bonus_claim': user_data['last_daily_bonus_claim'].isoformat() if user_data['last_daily_bonus_claim'] else None
     })
 
@@ -448,7 +476,7 @@ async def api_spin(request: Request):
         logger.warning("api_spin: User ID is missing in request.")
         return json_response({'error': 'User ID is required'}, status=400)
     
-    result, final_balance = spin_slot(user_id)
+    result, final_balance = spin_slot(user_id) # spin_slot тепер повертає Dict з усіма даними
     if 'error' in result:
         return json_response(result, status=400)
     
@@ -478,7 +506,8 @@ async def api_claim_daily_bonus(request: Request):
             status=403 # Forbidden
         )
     else:
-        update_user_data(user_id, balance_change=DAILY_BONUS_AMOUNT, last_daily_bonus_claim=current_time)
+        new_balance = user_data['balance'] + DAILY_BONUS_AMOUNT
+        update_user_data(user_id, balance=new_balance, last_daily_bonus_claim=current_time)
         return json_response({'message': 'Бонус успішно отримано!', 'amount': DAILY_BONUS_AMOUNT})
 
 

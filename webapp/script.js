@@ -137,7 +137,7 @@ async function setupSounds() {
 
 // Запускаємо ініціалізацію звуків після першої взаємодії користувача
 window.addEventListener('click', () => setupSounds(), { once: true });
-window.addEventListener('touchstart', () => setupSounds(), { once: true }); // For mobile devices
+window.addEventListener('touchstart', () => setupSounds(), { once: true }); // Для мобільних пристроїв
 
 // Активація аудіо через кнопку (якщо автозапуск заблоковано)
 activateAudioButton.addEventListener('click', async () => {

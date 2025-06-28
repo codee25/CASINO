@@ -12,11 +12,31 @@ body {
 
 /* Casino Frame - Outer Container Styling */
 .casino-frame {
+    /* Removed fixed max-width and padding to allow full screen */
     /* Tailwind handles flex, margin, padding, rounded, shadow, border */
     position: relative;
     overflow: hidden; /* For decorative elements */
     z-index: 10; /* Ensure it's above potential background animations */
+    /* Ensure it takes full height/width on smaller screens */
+    height: 100vh; /* Full viewport height */
+    max-width: none; /* No max-width constraint */
+    border-radius: 0; /* No rounded corners for full screen */
+    padding: 0; /* No padding */
+    box-shadow: none; /* No outer shadow */
 }
+
+/* Container for content inside the frame, with proper padding */
+.casino-frame > div:nth-child(2) { /* This targets the second div inside casino-frame, which is the main content area */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start; /* Align content to top, but allow it to center if space is available */
+    width: 100%;
+    height: calc(100vh - 4rem); /* Full height minus top bar height (h-16 = 4rem) */
+    padding-top: 2rem; /* Add some top padding below the top bar */
+    padding-bottom: 2rem; /* Add some bottom padding */
+}
+
 
 /* Heading H1 */
 h1 {
@@ -25,15 +45,42 @@ h1 {
 }
 
 /* Balance Display */
-.balance-display {
+.balance-area {
     /* Tailwind handles flex, justify, align, rounded, padding, margin, shadow, border */
     min-width: 280px; /* Ensure balance area is consistent */
+    width: 90%; /* Make it responsive */
+    max-width: 380px; /* Max width for larger screens */
+}
+
+/* XP Bar Styling */
+.xp-bar {
+    /* Tailwind handles width, bg, rounded, height */
+    overflow: hidden; /* Ensure progress bar stays within bounds */
+}
+#xpProgressBar {
+    /* Tailwind handles height, bg, rounded, transition */
+    transform-origin: left; /* Ensure animation grows from left */
+}
+/* Animation for balance update */
+@keyframes pulse-balance {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.05); opacity: 0.8; }
+    100% { transform: scale(1); opacity: 1; }
+}
+.animate-pulse-balance {
+    animation: pulse-balance 0.5s ease-out; /* Apply this class via JS */
 }
 
 /* Slot Machine Reels Container */
 .slot-machine {
     /* Tailwind handles flex, justify, gap, margin, width, max-width, mx-auto */
     perspective: 800px; /* Stronger 3D perspective for reel animations */
+    background-color: #0d0d1a; /* Darker background for reels section */
+    border-radius: 12px;
+    padding: 10px 5px;
+    box-shadow: inset 0 0 15px rgba(0,0,0,0.7), 0 0 20px rgba(255,204,0,0.5);
+    width: 90%; /* Responsive width */
+    max-width: 450px; /* Max width for larger screens */
 }
 
 /* Individual Reel Styling */
@@ -44,6 +91,8 @@ h1 {
     align-items: center;
     justify-content: center;
     box-shadow: inset 0 0 15px rgba(0,0,0,0.5), 0 0 10px rgba(255,204,0,0.3); /* Inner and outer glow */
+    border-radius: 8px;
+    transition: filter 0.1s ease-out; /* For quick blur changes */
 }
 
 /* Reel Content - The actual moving part inside the reel */
@@ -74,10 +123,10 @@ h1 {
 }
 
 /* Spinning effect (blur) */
-.reel.spinning .reel-symbol {
+.reel.spinning {
     filter: blur(3px); /* Apply blur during rapid spin */
 }
-.reel.stopped .reel-symbol {
+.reel.stopped {
     filter: blur(0); /* Remove blur when stopped */
 }
 
@@ -88,6 +137,8 @@ h1 {
     letter-spacing: 0.05em; /* More spacious text */
     position: relative;
     overflow: hidden;
+    z-index: 1; /* Ensure glow/hover effects are above other elements */
+    min-height: 60px; /* Ensure consistent button height */
 }
 .spin-button:before {
     content: '';
@@ -108,6 +159,21 @@ h1 {
     box-shadow: inset 0 2px 5px rgba(0,0,0,0.3); /* Press effect */
 }
 
+/* Daily Bonus Button */
+.daily-bonus-button {
+    min-height: 60px;
+    /* Tailwind handles most */
+    letter-spacing: 0.02em;
+}
+
+/* Game Controls layout adjustments */
+.game-controls {
+    width: 90%; /* Responsive width */
+    max-width: 450px; /* Max width for larger screens */
+    flex-wrap: wrap; /* Allow wrapping on smaller screens if buttons get too wide */
+    justify-content: center; /* Center buttons when wrapped */
+}
+
 
 /* Message Area Styling */
 .message {
@@ -116,10 +182,20 @@ h1 {
     max-width: 90%; /* Prevent stretching on wide screens */
 }
 .win-message {
-    /* Keyframes for shine are in HTML for simplicity, text styling is here */
+    /* Keyframes for shine are in JS, text styling is here */
     font-size: 1.5em; /* Larger for wins */
     text-shadow: 0 0 10px #00ff00, 0 0 20px #00ff00; /* Green glow */
     color: #00ff00; /* Fallback for transparency */
+}
+.big-win-message {
+    font-size: 1.8em;
+    text-shadow: 0 0 15px #ffd700, 0 0 30px #ffd700;
+    background: linear-gradient(90deg, #ffd700, #ff8c00, #ffd700);
+    background-size: 200% 100%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    animation: shine 2s infinite linear;
+    font-weight: bold;
 }
 .lose-message {
     color: #ff4d4d; /* Softer red for loss */
@@ -176,3 +252,21 @@ h1 {
 .audio-prompt button {
     box-shadow: 0 2px 5px rgba(0,0,0,0.2);
 }
+
+/* Keyframe animations for visual effects */
+/* Pulsing effect for spin button */
+@keyframes pulse {
+    0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7); }
+    70% { transform: scale(1.05); box-shadow: 0 0 0 10px rgba(76, 175, 80, 0); }
+    100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(76, 175, 80, 0); }
+}
+button.pulsing {
+    animation: pulse 1.5s infinite;
+}
+
+/* Shine effect for text (used in win-message) */
+@keyframes shine {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
