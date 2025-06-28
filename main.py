@@ -43,7 +43,7 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 # --- Конфігурація гри (збігається з JS фронтендом) ---
-SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '�']
+SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀']
 WILD_SYMBOL = '⭐'
 SCATTER_SYMBOL = '💰'
 ALL_REEL_SYMBOLS = SYMBOLS + [WILD_SYMBOL, SCATTER_SYMBOL]
@@ -51,6 +51,12 @@ ALL_REEL_SYMBOLS = SYMBOLS + [WILD_SYMBOL, SCATTER_SYMBOL]
 BET_AMOUNT = 100
 FREE_COINS_AMOUNT = 500 # Кількість фантиків для /get_coins
 COOLDOWN_HOURS = 24 # Затримка в годинах для /get_coins
+
+DAILY_BONUS_AMOUNT = 300 # Щоденний бонус через Web App
+DAILY_BONUS_COOLDOWN_HOURS = 24
+
+QUICK_BONUS_AMOUNT = 100 # Швидкий бонус через Web App
+QUICK_BONUS_COOLDOWN_MINUTES = 15
 
 # XP та Рівні
 XP_PER_SPIN = 10
@@ -117,7 +123,6 @@ def get_db_connection():
             host=url.hostname,
             port=url.port,
             sslmode='require',
-            # Важливо для довготривалих з'єднань
             keepalives=1, 
             keepalives_idle=30,
             keepalives_interval=10,
@@ -138,28 +143,31 @@ def init_db():
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # 1. Створення таблиці users, якщо вона не існує (без last_daily_bonus_claim)
+        # 1. Створення таблиці users, якщо вона не існує
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
                 balance INTEGER DEFAULT 1000,
                 xp INTEGER DEFAULT 0,
                 level INTEGER DEFAULT 1,
-                last_free_coins_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL
+                last_free_coins_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+                last_daily_bonus_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+                last_quick_bonus_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL
             )
         ''')
         conn.commit()
         logger.info("Table 'users' initialized or already exists.")
 
-        # 2. Міграції для додавання стовпців, якщо вони вже існують у старих версіях
-        migrations = [
+        # 2. Міграції для додавання стовпців, якщо вони не існують
+        migrations_to_add = [
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS xp INTEGER DEFAULT 0;",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS level INTEGER DEFAULT 1;",
-            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_free_coins_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL;"
-            # ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily_bonus_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL; - ВИДАЛЕНО
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_free_coins_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily_bonus_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_quick_bonus_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL;"
         ]
 
-        for mig_sql in migrations:
+        for mig_sql in migrations_to_add:
             try:
                 cursor.execute(mig_sql)
                 conn.commit()
@@ -168,17 +176,8 @@ def init_db():
                 logger.warning(f"Migration failed (might already exist or specific DB error): {e} -> {mig_sql}")
                 conn.rollback()
 
-        # Додатково: видалити стовпець last_daily_bonus_claim, якщо він існує (якщо був доданий раніше)
-        try:
-            cursor.execute('''
-                ALTER TABLE users DROP COLUMN IF EXISTS last_daily_bonus_claim;
-            ''')
-            conn.commit()
-            logger.info("Column 'last_daily_bonus_claim' removed if existed.")
-        except psycopg2.ProgrammingError as e:
-            logger.warning(f"Failed to drop column 'last_daily_bonus_claim': {e}")
-            conn.rollback()
-
+        # 3. Міграції для видалення стовпців, якщо вони більше не потрібні (якщо логіка змінювалася)
+        # Наразі, не видаляємо жодних, оскільки всі потрібні.
 
         logger.info("DB schema migration checked.")
 
@@ -189,89 +188,100 @@ def init_db():
             conn.close()
 
 def get_user_data(user_id):
-    """Отримує всі дані користувача (баланс, XP, рівень, час останніх бонусів) з БД."""
+    """Отримує всі дані користувача з БД. Створює, якщо не існує."""
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
-            'SELECT balance, xp, level, last_free_coins_claim FROM users WHERE user_id = %s', 
+            'SELECT balance, xp, level, last_free_coins_claim, last_daily_bonus_claim, last_quick_bonus_claim FROM users WHERE user_id = %s', 
             (user_id,)
         )
         result = cursor.fetchone()
         if result:
+            # Перетворюємо naive datetime об'єкти на aware (UTC)
+            last_free_coins_claim_db = result[3]
+            if last_free_coins_claim_db and last_free_coins_claim_db.tzinfo is None:
+                last_free_coins_claim_db = last_free_coins_claim_db.replace(tzinfo=timezone.utc)
+            
+            last_daily_bonus_claim_db = result[4]
+            if last_daily_bonus_claim_db and last_daily_bonus_claim_db.tzinfo is None:
+                last_daily_bonus_claim_db = last_daily_bonus_claim_db.replace(tzinfo=timezone.utc)
+
+            last_quick_bonus_claim_db = result[5]
+            if last_quick_bonus_claim_db and last_quick_bonus_claim_db.tzinfo is None:
+                last_quick_bonus_claim_db = last_quick_bonus_claim_db.replace(tzinfo=timezone.utc)
+
             return {
                 'balance': result[0],
                 'xp': result[1],
                 'level': result[2],
-                'last_free_coins_claim': result[3]
+                'last_free_coins_claim': last_free_coins_claim_db,
+                'last_daily_bonus_claim': last_daily_bonus_claim_db,
+                'last_quick_bonus_claim': last_quick_bonus_claim_db
             }
         else:
-            # Якщо користувача немає, створити його з початковими значеннями
+            # Створення нового користувача з дефолтними значеннями
             cursor.execute(
-                'INSERT INTO users (user_id, balance, xp, level, last_free_coins_claim) VALUES (%s, %s, %s, %s, %s)', 
-                (user_id, 1000, 0, 1, None)
+                'INSERT INTO users (user_id, balance, xp, level, last_free_coins_claim, last_daily_bonus_claim, last_quick_bonus_claim) VALUES (%s, %s, %s, %s, %s, %s, %s)', 
+                (user_id, 1000, 0, 1, None, None, None)
             )
             conn.commit()
             return {
                 'balance': 1000,
                 'xp': 0,
                 'level': 1,
-                'last_free_coins_claim': None
+                'last_free_coins_claim': None,
+                'last_daily_bonus_claim': None,
+                'last_quick_bonus_claim': None
             }
     except Exception as e:
         logger.error(f"Error getting user data from PostgreSQL for {user_id}: {e}")
-        return {'balance': 0, 'xp': 0, 'level': 1, 'last_free_coins_claim': None}
+        # Повернути дефолтні значення у випадку помилки, щоб додаток не падав
+        return {
+            'balance': 0, 'xp': 0, 'level': 1, 
+            'last_free_coins_claim': None, 'last_daily_bonus_claim': None, 'last_quick_bonus_claim': None
+        }
     finally:
         if conn:
             conn.close()
 
-def update_user_data(user_id, balance=None, xp=None, level=None, last_free_coins_claim=None):
-    """Оновлює дані користувача в базі даних PostgreSQL. Приймає АБСОЛЮТНІ ЗНАЧЕННЯ."""
+def update_user_data(user_id, **kwargs):
+    """Оновлює дані користувача в базі даних PostgreSQL. Приймає ключові аргументи для оновлення."""
     conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        update_fields = []
+        # Отримуємо поточні дані, щоб коректно обробляти відсутні kwargs
+        current_data_from_db = get_user_data(user_id) 
+
+        update_fields_parts = []
         update_values = []
 
-        # Отримуємо поточні дані, щоб зберегти ті, які не оновлюються
-        current_data_from_db = get_user_data(user_id) # Отримуємо актуальні дані з бази
+        # Заповнюємо значення для оновлення
+        fields_to_update = {
+            'balance': kwargs.get('balance', current_data_from_db['balance']),
+            'xp': kwargs.get('xp', current_data_from_db['xp']),
+            'level': kwargs.get('level', current_data_from_db['level']),
+            'last_free_coins_claim': kwargs.get('last_free_coins_claim', current_data_from_db['last_free_coins_claim']),
+            'last_daily_bonus_claim': kwargs.get('last_daily_bonus_claim', current_data_from_db['last_daily_bonus_claim']),
+            'last_quick_bonus_claim': kwargs.get('last_quick_bonus_claim', current_data_from_db['last_quick_bonus_claim'])
+        }
 
-        if balance is not None:
-            update_fields.append("balance = %s")
-            update_values.append(balance)
-        else:
-            update_values.append(current_data_from_db['balance']) # Якщо не надано, використовуємо поточне з БД
-
-        if xp is not None:
-            update_fields.append("xp = %s")
-            update_values.append(xp)
-        else:
-            update_values.append(current_data_from_db['xp'])
-
-        if level is not None:
-            update_fields.append("level = %s")
-            update_values.append(level)
-        else:
-            update_values.append(current_data_from_db['level'])
-
-        if last_free_coins_claim is not None:
-            update_fields.append("last_free_coins_claim = %s")
-            update_values.append(last_free_coins_claim)
-        else:
-            update_values.append(current_data_from_db['last_free_coins_claim'])
-
-        if not update_fields: # Якщо немає полів для оновлення, нічого не робимо
-            logger.info(f"No fields to update for user {user_id}.")
+        for field, value in fields_to_update.items():
+            update_fields_parts.append(sql.SQL("{} = %s").format(sql.Identifier(field)))
+            update_values.append(value)
+        
+        if not update_fields_parts:
+            logger.info(f"No fields specified for update for user {user_id}.")
             return
 
         update_query = sql.SQL('''
             UPDATE users SET {fields} WHERE user_id = %s
-        ''').format(fields=sql.SQL(', ').join(map(sql.SQL, update_fields)))
+        ''').format(fields=sql.SQL(', ').join(update_fields_parts))
 
-        update_values.append(user_id) # Додаємо user_id в кінець для WHERE
+        update_values.append(user_id)
 
         cursor.execute(update_query, update_values)
         conn.commit()
@@ -294,36 +304,41 @@ def check_win_conditions(symbols):
         return PAYOUTS.get(tuple([SCATTER_SYMBOL] * scatter_count), 0)
 
     # --- Перевірка виграшів для 3 однакових символів (з Wild) ---
-    # Спочатку перевіряємо чи всі символи однакові або Wild
-    if (s1 == s2 == s3) or \
-       (s1 == WILD_SYMBOL and s2 == s3) or \
-       (s2 == WILD_SYMBOL and s1 == s3) or \
-       (s3 == WILD_SYMBOL and s1 == s2) or \
-       (s1 == WILD_SYMBOL and s2 == WILD_SYMBOL and s3 in SYMBOLS) or \
-       (s1 == WILD_SYMBOL and s3 == WILD_SYMBOL and s2 in SYMBOLS) or \
-       (s2 == WILD_SYMBOL and s3 == WILD_SYMBOL and s1 in SYMBOLS) or \
-       (s1 == WILD_SYMBOL and s2 == WILD_SYMBOL and s3 == WILD_SYMBOL):
-       
-        # Визначаємо "основний" символ, який Wild замінив, або сам Wild
-        effective_symbol = ''
-        if s1 != WILD_SYMBOL and s1 != SCATTER_SYMBOL: effective_symbol = s1
-        elif s2 != WILD_SYMBOL and s2 != SCATTER_SYMBOL: effective_symbol = s2
-        elif s3 != WILD_SYMBOL and s3 != SCATTER_SYMBOL: effective_symbol = s3
-        else: effective_symbol = WILD_SYMBOL # Якщо всі Wild, то виграш за Wild
+    # Перевіряємо три Wilds окремо, оскільки це найвищий виграш
+    if s1 == WILD_SYMBOL and s2 == WILD_SYMBOL and s3 == WILD_SYMBOL:
+        return PAYOUTS.get(('⭐', '⭐', '⭐'), 0)
 
-        return PAYOUTS.get((effective_symbol, effective_symbol, effective_symbol), 0)
-
-    # --- Перевірка виграшів для 2 однакових символів (лише перші два, з Wild) ---
-    # Це спрощена перевірка, яка враховує лише s1 та s2.
-    # Якщо потрібно складнішу логіку (s2,s3 або s1,s3), її потрібно додати окремо.
+    # Перевіряємо на 3 однакові символи або 2 символи + Wild, що замінює третій
     for main_symbol in SYMBOLS:
+        current_match_count = 0
+        if s1 == main_symbol or s1 == WILD_SYMBOL: current_match_count += 1
+        if s2 == main_symbol or s2 == WILD_SYMBOL: current_match_count += 1
+        if s3 == main_symbol or s3 == WILD_SYMBOL: current_match_count += 1
+
+        if current_match_count == 3:
+            return PAYOUTS.get((main_symbol, main_symbol, main_symbol), 0)
+
+    # --- Перевірка виграшів для 2 однакових символів (з Wild) ---
+    for main_symbol in SYMBOLS:
+        # s1, s2 - s3 не match
         if ((s1 == main_symbol or s1 == WILD_SYMBOL) and 
             (s2 == main_symbol or s2 == WILD_SYMBOL) and
-            (s3 != main_symbol and s3 != WILD_SYMBOL and s3 != SCATTER_SYMBOL)): # Третій символ НЕ має бути частиною виграшу
+            (s3 != main_symbol and s3 != WILD_SYMBOL and s3 != SCATTER_SYMBOL)):
             return PAYOUTS.get((main_symbol, main_symbol), 0)
-    
+        
+        # s1, s3 - s2 не match
+        if ((s1 == main_symbol or s1 == WILD_SYMBOL) and 
+            (s3 == main_symbol or s3 == WILD_SYMBOL) and
+            (s2 != main_symbol and s2 != WILD_SYMBOL and s2 != SCATTER_SYMBOL)):
+            return PAYOUTS.get((main_symbol, main_symbol), 0)
+        
+        # s2, s3 - s1 не match
+        if ((s2 == main_symbol or s2 == WILD_SYMBOL) and 
+            (s3 == main_symbol or s3 == WILD_SYMBOL) and
+            (s1 != main_symbol and s1 != WILD_SYMBOL and s1 != SCATTER_SYMBOL)):
+            return PAYOUTS.get((main_symbol, main_symbol), 0)
+            
     return winnings
-
 
 def spin_slot(user_id):
     user_data = get_user_data(user_id)
@@ -335,9 +350,8 @@ def spin_slot(user_id):
         return {'error': 'Недостатньо коштів для спіна!'}, current_balance
 
     result_symbols = [random.choice(ALL_REEL_SYMBOLS) for _ in range(3)]
-    winnings = check_win_conditions(result_symbols) # Використовуємо нову функцію перевірки
+    winnings = check_win_conditions(result_symbols)
 
-    # Розрахунок нового балансу та XP
     new_balance = current_balance - BET_AMOUNT + winnings
     xp_gained = XP_PER_SPIN
     if winnings > 0:
@@ -349,7 +363,6 @@ def spin_slot(user_id):
     new_xp = current_xp + xp_gained
     new_level = get_level_from_xp(new_xp)
 
-    # Оновлюємо дані користувача в БД
     update_user_data(user_id, balance=new_balance, xp=new_xp, level=new_level)
 
     final_user_data = get_user_data(user_id) # Отримуємо оновлені дані після спіна
@@ -360,7 +373,7 @@ def spin_slot(user_id):
         'new_balance': final_user_data['balance'],
         'xp': final_user_data['xp'],
         'level': final_user_data['level'],
-        'next_level_xp': get_xp_for_next_level(final_user_data['level']) # Додаємо для фронтенду
+        'next_level_xp': get_xp_for_next_level(final_user_data['level'])
     }, final_user_data['balance']
 
 
@@ -369,8 +382,8 @@ def spin_slot(user_id):
 @dp.message(CommandStart())
 async def send_welcome(message: Message):
     user_id = message.from_user.id
-    init_db() # Ініціалізуємо БД при першому старті (безпечно викликати багато разів)
-    user_data = get_user_data(user_id) # Отримуємо або створюємо користувача
+    init_db()
+    user_data = get_user_data(user_id)
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎰 Відкрити Слот-Казино 🎰", web_app=WebAppInfo(url=WEB_APP_URL))]
@@ -423,6 +436,7 @@ async def get_free_coins_command(message: Message):
     last_claim_time = user_data['last_free_coins_claim']
 
     current_time = datetime.now(timezone.utc)
+
     cooldown_duration = timedelta(hours=COOLDOWN_HOURS)
 
     if last_claim_time and (current_time - last_claim_time) < cooldown_duration:
@@ -453,13 +467,15 @@ async def api_get_balance(request: Request):
         logger.warning("api_get_balance: User ID is missing in request.")
         return json_response({'error': 'User ID is required'}, status=400)
     
-    user_data = get_user_data(user_id) # Повертаємо всі дані
+    user_data = get_user_data(user_id)
     return json_response({
         'balance': user_data['balance'],
         'xp': user_data['xp'],
         'level': user_data['level'],
         'next_level_xp': get_xp_for_next_level(user_data['level']),
-        'last_free_coins_claim': user_data['last_free_coins_claim'].isoformat() if user_data['last_free_coins_claim'] else None
+        'last_free_coins_claim': user_data['last_free_coins_claim'].isoformat() if user_data['last_free_coins_claim'] else None,
+        'last_daily_bonus_claim': user_data['last_daily_bonus_claim'].isoformat() if user_data['last_daily_bonus_claim'] else None,
+        'last_quick_bonus_claim': user_data['last_quick_bonus_claim'].isoformat() if user_data['last_quick_bonus_claim'] else None
     })
 
 async def api_spin(request: Request):
@@ -469,14 +485,67 @@ async def api_spin(request: Request):
         logger.warning("api_spin: User ID is missing in request.")
         return json_response({'error': 'User ID is required'}, status=400)
     
-    result, final_balance = spin_slot(user_id)
+    result, _ = spin_slot(user_id)
     if 'error' in result:
         return json_response(result, status=400)
     
     return json_response(result)
 
+async def api_claim_daily_bonus(request: Request):
+    """API-ендпоінт для отримання щоденного бонусу через Web App."""
+    data = await request.json()
+    user_id = data.get('user_id')
+    if not user_id:
+        logger.warning("api_claim_daily_bonus: User ID is missing in request.")
+        return json_response({'error': 'User ID is required'}, status=400)
+    
+    user_data = get_user_data(user_id)
+    last_claim_time = user_data['last_daily_bonus_claim']
 
-# api_claim_daily_bonus - ВИДАЛЕНО
+    current_time = datetime.now(timezone.utc)
+    cooldown_duration = timedelta(hours=DAILY_BONUS_COOLDOWN_HOURS)
+
+    if last_claim_time and (current_time - last_claim_time) < cooldown_duration:
+        time_left = cooldown_duration - (current_time - last_claim_time)
+        hours = int(time_left.total_seconds() // 3600)
+        minutes = int((time_left.total_seconds() % 3600) // 60)
+        seconds = int(time_left.total_seconds() % 60) # Додаємо секунди
+        return json_response(
+            {'error': f"Будь ласка, зачекайте {hours} год {minutes} хв {seconds} сек до наступного бонусу."}, 
+            status=403 # Forbidden
+        )
+    else:
+        new_balance = user_data['balance'] + DAILY_BONUS_AMOUNT
+        update_user_data(user_id, balance=new_balance, last_daily_bonus_claim=current_time)
+        return json_response({'message': 'Бонус успішно отримано!', 'amount': DAILY_BONUS_AMOUNT})
+
+async def api_claim_quick_bonus(request: Request):
+    """API-ендпоінт для отримання швидкого бонусу через Web App (15 хв)."""
+    data = await request.json()
+    user_id = data.get('user_id')
+    if not user_id:
+        logger.warning("api_claim_quick_bonus: User ID is missing in request.")
+        return json_response({'error': 'User ID is required'}, status=400)
+    
+    user_data = get_user_data(user_id)
+    last_claim_time = user_data['last_quick_bonus_claim']
+
+    current_time = datetime.now(timezone.utc)
+    cooldown_duration = timedelta(minutes=QUICK_BONUS_COOLDOWN_MINUTES)
+
+    if last_claim_time and (current_time - last_claim_time) < cooldown_duration:
+        time_left = cooldown_duration - (current_time - last_claim_time)
+        minutes = int(time_left.total_seconds() // 60)
+        seconds = int(time_left.total_seconds() % 60)
+        return json_response(
+            {'error': f"Будь ласка, зачекайте {minutes} хв {seconds} сек до наступного швидкого бонусу."}, 
+            status=403 # Forbidden
+        )
+    else:
+        new_balance = user_data['balance'] + QUICK_BONUS_AMOUNT
+        update_user_data(user_id, balance=new_balance, last_quick_bonus_claim=current_time)
+        return json_response({'message': 'Швидкий бонус успішно отримано!', 'amount': QUICK_BONUS_AMOUNT})
+
 
 # --- Функції для запуску бота та веб-сервера ---
 
@@ -497,7 +566,8 @@ app_aiohttp = Application()
 # Реєстрація API ендпоінтів для Web App (ПЕРЕД CORS)
 app_aiohttp.router.add_post('/api/get_balance', api_get_balance, name='api_get_balance')
 app_aiohttp.router.add_post('/api/spin', api_spin, name='api_spin')
-# app_aiohttp.router.add_post('/api/claim_daily_bonus', api_claim_daily_bonus, name='api_claim_daily_bonus') # ВИДАЛЕНО
+app_aiohttp.router.add_post('/api/claim_daily_bonus', api_claim_daily_bonus, name='api_claim_daily_bonus')
+app_aiohttp.router.add_post('/api/claim_quick_bonus', api_claim_quick_bonus, name='api_claim_quick_bonus') # НОВИЙ ЕНДПОІНТ
 
 # Налаштовуємо CORS для дозволу запитів з Web App URL
 cors = aiohttp_cors.setup(app_aiohttp, defaults={
@@ -511,8 +581,7 @@ cors = aiohttp_cors.setup(app_aiohttp, defaults={
 
 # Застосовуємо CORS до ваших API-маршрутів
 for route in list(app_aiohttp.router.routes()):
-    # Перевіряємо, чи це наші API маршрути, включаючи новий
-    if route.resource and route.resource.name in ['api_get_balance', 'api_spin']: # ВИДАЛЕНО 'api_claim_daily_bonus'
+    if route.resource and route.resource.name in ['api_get_balance', 'api_spin', 'api_claim_daily_bonus', 'api_claim_quick_bonus']:
         cors.add(route)
 
 # Реєстрація хендлера для Telegram webhook

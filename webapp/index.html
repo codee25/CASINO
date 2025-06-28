@@ -2,84 +2,83 @@
 <html lang="uk">
 <head>
     <meta charset="UTF-8">
-    <!-- Змінено viewport для кращої поведінки на весь екран -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Імперія Слота: Віртуальне Казино</title>
-    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Custom CSS -->
     <link rel="stylesheet" href="style.css">
-    <!-- GSAP CDN for advanced animations -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.9.1/gsap.min.js"></script>
-    <!-- Tone.js CDN for sound effects -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
-    <!-- Telegram WebApp Script -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
-<!-- Body тепер займає всю висоту, без зайвих відступів -->
-<body class="flex items-center justify-center w-screen h-screen bg-gradient-to-br from-purple-900 via-gray-900 to-indigo-900 text-white overflow-hidden">
+<body class="flex flex-col items-center justify-between w-screen h-screen bg-gradient-to-br from-purple-900 via-gray-900 to-indigo-900 text-white overflow-hidden">
 
-    <!-- Головний контейнер додатку, що займає весь екран. Рамки прибрано. -->
-    <div class="casino-app-container relative w-full h-full flex flex-col items-center justify-between">
+    <div class="casino-app-container relative w-full h-full flex flex-col items-center justify-start">
         
-        <!-- Декоративна верхня панель -->
-        <div class="app-header w-full h-16 bg-gradient-to-b from-yellow-700 to-yellow-900 shadow-lg flex items-center justify-center text-xl font-bold text-gray-900 uppercase tracking-widest z-10">
+        <!-- Верхня панель з назвою та кнопкою швидкого бонусу -->
+        <div class="app-header w-full h-16 bg-gradient-to-b from-yellow-700 to-yellow-900 shadow-lg flex items-center justify-center text-xl font-bold text-gray-900 uppercase tracking-widest z-10 flex-shrink-0 relative">
             Імперія Слота
+            <!-- Кнопка швидкого бонусу -->
+            <button id="quickBonusButton" class="quick-bonus-button absolute right-4 w-12 h-12 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center text-lg font-bold shadow-md transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95 pulsing">
+                💰
+                <span id="quickBonusCooldown" class="quick-bonus-countdown absolute top-0 right-0 bg-red-600 text-white text-xs px-1 rounded-full opacity-0 pointer-events-none transition-opacity duration-200"></span>
+            </button>
         </div>
 
-        <!-- Основний контент гри - дозволяє прокрутку -->
-        <div class="game-content-scrollable flex-grow flex flex-col items-center justify-start p-4 md:p-8 overflow-y-auto w-full">
-            <h1 class="text-4xl md:text-5xl font-extrabold text-yellow-400 mb-6 md:mb-8 drop-shadow-lg leading-tight text-center mt-4">
+        <!-- Основний контент гри -->
+        <div class="game-content-fixed flex-grow flex flex-col items-center justify-around p-4 md:p-8 w-full">
+            <h1 class="text-3xl md:text-4xl font-extrabold text-yellow-400 mb-4 drop-shadow-lg leading-tight text-center">
                 Віртуальне Казино
             </h1>
 
             <!-- Balance and Level Display -->
-            <div class="balance-area bg-gray-800 rounded-xl py-3 px-6 mb-6 md:mb-8 flex flex-col justify-center items-center shadow-inner border border-gray-700 w-full max-w-sm">
-                <div class="flex justify-between items-center w-full mb-2">
-                    <span class="text-lg md:text-xl text-gray-300 font-medium">Ваш баланс:</span>
-                    <span id="userBalance" class="font-bold text-yellow-300 text-3xl md:text-4xl">0</span>
-                    <span class="text-lg md:text-xl text-gray-300 font-medium ml-2">фантиків</span>
+            <div class="balance-area bg-gray-800 rounded-xl py-2 px-4 mb-4 flex flex-col justify-center items-center shadow-inner border border-gray-700 w-full max-w-xs md:max-w-sm">
+                <div class="flex justify-between items-center w-full mb-1">
+                    <span class="text-base md:text-lg text-gray-300 font-medium">Баланс:</span>
+                    <span id="userBalance" class="font-bold text-yellow-300 text-2xl md:text-3xl">0</span>
+                    <span class="text-base md:text-lg text-gray-300 font-medium ml-2">фантиків</span>
                 </div>
-                <div class="level-progress w-full mt-2">
-                    <div class="flex justify-between items-center text-sm text-gray-400 mb-1">
+                <div class="level-progress w-full mt-1">
+                    <div class="flex justify-between items-center text-xs text-gray-400 mb-0.5">
                         <span>Рівень: <span id="userLevel" class="font-bold text-white">1</span></span>
                         <span>XP: <span id="userXp" class="font-bold text-white">0</span>/<span id="nextLevelXp" class="font-bold text-white">100</span></span>
                     </div>
-                    <div class="xp-bar w-full bg-gray-600 rounded-full h-3">
+                    <div class="xp-bar w-full bg-gray-600 rounded-full h-2">
                         <div id="xpProgressBar" class="h-full bg-blue-500 rounded-full transition-all duration-300 ease-out" style="width: 0%;"></div>
                     </div>
                 </div>
             </div>
 
             <!-- Slot Machine Reels -->
-            <div class="slot-machine flex justify-center gap-2 md:gap-4 mb-8 md:mb-10 w-full max-w-sm mx-auto relative px-2 py-4">
+            <div class="slot-machine flex justify-center gap-2 mb-4 w-full max-w-xs md:max-w-sm mx-auto relative px-1 py-3">
                 <!-- Decorative light bar above reels -->
-                <div class="absolute -top-4 left-1/2 transform -translate-x-1/2 w-3/4 h-3 bg-gradient-to-r from-yellow-400 to-red-500 rounded-t-lg shadow-lg"></div>
+                <div class="absolute -top-3 left-1/2 transform -translate-x-1/2 w-3/4 h-2 bg-gradient-to-r from-yellow-400 to-red-500 rounded-t-lg shadow-lg"></div>
                 <!-- Reel 1 -->
-                <div id="reel1" class="reel relative w-28 h-28 md:w-32 md:h-32 rounded-lg bg-gray-800 border-4 border-yellow-500 overflow-hidden shadow-inner transform-gpu">
+                <div id="reel1" class="reel relative w-24 h-24 md:w-28 md:h-28 rounded-lg bg-gray-800 border-3 border-yellow-500 overflow-hidden shadow-inner transform-gpu">
                     <div class="reel-content absolute top-0 left-0 w-full h-full"></div>
                 </div>
                 <!-- Reel 2 -->
-                <div id="reel2" class="reel relative w-28 h-28 md:w-32 md:h-32 rounded-lg bg-gray-800 border-4 border-yellow-500 overflow-hidden shadow-inner transform-gpu">
+                <div id="reel2" class="reel relative w-24 h-24 md:w-28 md:h-28 rounded-lg bg-gray-800 border-3 border-yellow-500 overflow-hidden shadow-inner transform-gpu">
                     <div class="reel-content absolute top-0 left-0 w-full h-full"></div>
                 </div>
                 <!-- Reel 3 -->
-                <div id="reel3" class="reel relative w-28 h-28 md:w-32 md:h-32 rounded-lg bg-gray-800 border-4 border-yellow-500 overflow-hidden shadow-inner transform-gpu">
+                <div id="reel3" class="reel relative w-24 h-24 md:w-28 md:h-28 rounded-lg bg-gray-800 border-3 border-yellow-500 overflow-hidden shadow-inner transform-gpu">
                     <div class="reel-content absolute top-0 left-0 w-full h-full"></div>
                 </div>
                 <!-- Decorative light bar below reels -->
-                <div class="absolute -bottom-4 left-1/2 transform -translate-x-1/2 w-3/4 h-3 bg-gradient-to-r from-red-500 to-yellow-400 rounded-b-lg shadow-lg"></div>
+                <div class="absolute -bottom-3 left-1/2 transform -translate-x-1/2 w-3/4 h-2 bg-gradient-to-r from-red-500 to-yellow-400 rounded-b-lg shadow-lg"></div>
             </div>
 
-            <!-- Game Controls (Spin button only) -->
-            <div class="game-controls flex flex-col items-center gap-4 mb-6 md:mb-8 w-full max-w-sm">
-                <button id="spinButton" class="spin-button bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-extrabold py-4 px-8 rounded-full text-xl md:text-2xl shadow-xl transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 w-full uppercase tracking-wider pulsing flex items-center justify-center">
+            <!-- Game Controls (Spin and Daily Bonus) -->
+            <div class="game-controls flex flex-col md:flex-row gap-3 mb-4 w-full max-w-xs md:max-w-sm">
+                <button id="spinButton" class="spin-button bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-extrabold py-3 px-6 rounded-full text-lg md:text-xl shadow-xl transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 w-full uppercase tracking-wider flex items-center justify-center">
                     Крутити! (Ставка: 100)
                 </button>
-                <!-- dailyBonusButton - ВИДАЛЕНО -->
+                <button id="dailyBonusButton" class="daily-bonus-button bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-bold py-3 px-6 rounded-full text-lg shadow-lg transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex items-center justify-center whitespace-nowrap mt-3 md:mt-0">
+                    Щоденна Винагорода <span id="dailyBonusCooldown" class="ml-2 text-sm text-blue-200"></span>
+                </button>
             </div>
             
-            <div id="message" class="message text-lg md:text-xl font-semibold mt-6 min-h-[40px] flex items-center justify-center text-center w-full max-w-sm">
+            <div id="message" class="message text-base md:text-lg font-semibold mt-4 min-h-[30px] flex items-center justify-center text-center w-full max-w-sm">
                 <!-- Messages will appear here -->
             </div>
         </div>
