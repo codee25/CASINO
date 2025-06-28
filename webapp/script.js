@@ -1,4 +1,16 @@
 // =================================================================
+// 🚀 Початкові логи та перевірка WebApp
+// =================================================================
+console.log("[DEBUG-INIT] Script loaded.");
+if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
+    Telegram.WebApp.sendData('JS_DEBUG: Script loaded and Telegram.WebApp detected.');
+} else {
+    console.error("Telegram.WebApp is not detected at script start.");
+    // No Telegram.WebApp.sendData if Telegram.WebApp is completely missing
+}
+
+
+// =================================================================
 // 🎮 Елементи DOM
 // =================================================================
 const spinButton = document.getElementById('spinButton');
@@ -16,6 +28,16 @@ const leaderboardModal = document.getElementById('leaderboardModal');
 const leaderboardTableBody = document.getElementById('leaderboardTableBody');
 const leaderboardLoading = document.getElementById('leaderboardLoading');
 const leaderboardError = document.getElementById('leaderboardError');
+
+// Перевірка, чи знайдено елементи DOM, і логування цього
+console.log(`[DEBUG-DOM] spinButton: ${!!spinButton}`);
+console.log(`[DEBUG-DOM] leaderboardButton: ${!!leaderboardButton}`);
+console.log(`[DEBUG-DOM] leaderboardModal: ${!!leaderboardModal}`);
+
+if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
+    Telegram.WebApp.sendData(`JS_DEBUG: DOM Elements found - LBBtn:${!!leaderboardButton}, LBModal:${!!leaderboardModal}`);
+}
+
 
 const reelElements = [
     document.getElementById('reel1'),
@@ -72,7 +94,7 @@ if (typeof Telegram !== 'undefined' && Telegram.WebApp && Telegram.WebApp.initDa
     telegramUsername = Telegram.WebApp.initDataUnsafe.user.username || Telegram.WebApp.initDataUnsafe.user.first_name || `Гравець ${String(userId).slice(-4)}`;
     console.log(`[WebApp Init] Telegram User ID: ${userId}, Username: ${telegramUsername}`);
     Telegram.WebApp.expand();
-    Telegram.WebApp.sendData(`JS_LOG: WebApp Initialized for User: ${userId}`); // Send log to Telegram
+    Telegram.WebApp.sendData(`JS_LOG: WebApp Initialized for User: ${userId}`);
 } else {
     console.warn('[WebApp Init] Telegram WebApp not found or testing outside Telegram.');
     messageDiv.textContent = '⚠️ Будь ласка, запустіть гру через Telegram.';
@@ -81,13 +103,11 @@ if (typeof Telegram !== 'undefined' && Telegram.WebApp && Telegram.WebApp.initDa
     spinButton.classList.remove('pulsing');
     dailyBonusButton.disabled = true;
     quickBonusButton.disabled = true;
-    if (leaderboardButton) leaderboardButton.disabled = true; // Вимкнути кнопку лідерів, якщо WebApp не ініціалізовано
-    // Send log to Telegram if WebApp is not initialized
+    if (leaderboardButton) leaderboardButton.disabled = true;
     if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
-        Telegram.WebApp.sendData('JS_LOG: WebApp NOT Initialized - user ID missing');
+        Telegram.WebApp.sendData('JS_LOG: WebApp NOT Initialized - user ID missing.');
     } else {
-        // Fallback for extreme cases if Telegram.WebApp is totally missing
-        console.error("Telegram.WebApp object is completely missing.");
+        console.error("Telegram.WebApp object is completely missing. Cannot send logs.");
     }
 }
 
@@ -130,11 +150,11 @@ async function setupSounds() {
             await Tone.start();
             console.log("[Audio] AudioContext is running.");
             audioPrompt.style.display = 'none';
-            Telegram.WebApp.sendData('JS_LOG: AudioContext started.');
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: AudioContext started.');
         } catch (e) {
             console.error("[Audio] Помилка ініціалізації аудіо:", e);
             audioPrompt.style.display = 'flex';
-            Telegram.WebApp.sendData(`JS_ERROR: Audio init failed: ${e.message}`);
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Audio init failed: ${e.message}`);
             return;
         }
     } else {
@@ -174,15 +194,15 @@ function playQuickBonusSound() { if (quickBonusSound && Tone.context.state === '
 function showCustomModal(msg, title = "Повідомлення") {
     modalMessage.innerHTML = `<h3 class="text-xl font-bold mb-2">${title}</h3><p>${msg}</p>`;
     customModal.classList.add('active');
-    if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Showing modal: ${title} - ${msg.substring(0, 50)}`);
+    if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Showing modal: ${title} - ${msg.substring(0, Math.min(msg.length, 50))}`);
 }
 customModal.querySelector('.close-button').addEventListener('click', () => {
     customModal.classList.remove('active');
-    if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Custom modal closed.');
+    if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Custom modal closed.');
 });
 customModal.querySelector('.modal-content button').addEventListener('click', () => {
     customModal.classList.remove('active');
-    if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Custom modal closed (OK button).');
+    if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Custom modal closed (OK button).');
 });
 
 
@@ -192,7 +212,7 @@ customModal.querySelector('.modal-content button').addEventListener('click', () 
 async function updateBalanceAndProgressDisplay() {
     if (!userId) {
         console.warn('[Balance Update] Cannot update balance and progress: userId is null. Skipping API call.');
-        if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Balance update skipped - no user ID.');
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Balance update skipped - no user ID.');
         return;
     }
 
@@ -207,7 +227,7 @@ async function updateBalanceAndProgressDisplay() {
             const errData = await response.json();
             console.error('[Balance Update] API Error:', errData);
             showCustomModal(`Помилка: ${errData.error || 'Невідома помилка при отриманні даних.'}`, "Помилка завантаження");
-            if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Balance update API failed: ${errData.error || 'Unknown error'}`);
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Balance update API failed: ${errData.error || 'Unknown error'}`);
             return;
         }
 
@@ -224,7 +244,7 @@ async function updateBalanceAndProgressDisplay() {
             userBalanceSpan.classList.add('animate-pulse-balance');
             userBalanceSpan.textContent = currentBalance;
             lastKnownUserBalance = currentBalance;
-            if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Balance updated to ${currentBalance}`);
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Balance updated to ${currentBalance}`);
         }
 
         const nextLevelIndex = currentLevel < LEVEL_THRESHOLDS.length ? currentLevel : LEVEL_THRESHOLDS.length -1;
@@ -240,7 +260,7 @@ async function updateBalanceAndProgressDisplay() {
         if (currentLevel > lastKnownUserLevel && lastKnownUserLevel !== 0) {
             playLevelUpSound();
             showCustomModal(`🎉 Ви досягли Рівня ${currentLevel}! 🎉`, "Підвищення Рівня!");
-            if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Level Up! New Level: ${currentLevel}`);
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Level Up! New Level: ${currentLevel}`);
         }
         lastKnownUserXP = currentXP;
         lastKnownUserLevel = currentLevel;
@@ -250,11 +270,11 @@ async function updateBalanceAndProgressDisplay() {
 
         messageDiv.textContent = '';
         messageDiv.className = 'text-white';
-        if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Balance and progress display updated successfully.');
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Balance and progress display updated successfully.');
     } catch (error) {
         console.error('[Balance Update] Помилка при отриманні балансу та прогресу:', error);
         showCustomModal('🚫 Помилка звʼязку з сервером. Перевірте зʼєднання.', "Помилка");
-        if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Balance update network error: ${error.message}`);
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Balance update network error: ${error.message}`);
     }
 }
 
@@ -315,18 +335,18 @@ function updateDailyBonusButton(lastClaimTime) {
 dailyBonusButton.addEventListener('click', async () => {
     if (!userId) {
         showCustomModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб отримати User ID.', "Недоступно");
-        if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Daily Bonus clicked - no user ID.');
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Daily Bonus clicked - no user ID.');
         return;
     }
     if (dailyBonusButton.disabled) {
-        if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Daily Bonus clicked - button disabled.');
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Daily Bonus clicked - button disabled.');
         return;
     }
 
     dailyBonusButton.disabled = true;
     dailyBonusButton.classList.remove('pulsing');
     messageDiv.textContent = 'Отримуємо щоденну винагороду...';
-    if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Attempting to claim daily bonus...');
+    if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Attempting to claim daily bonus...');
 
     try {
         const response = await fetch(`${API_BASE_URL}/api/claim_daily_bonus`, {
@@ -341,12 +361,12 @@ dailyBonusButton.addEventListener('click', async () => {
             playDailyBonusSound();
             showCustomModal(`🎉 Ви отримали ${data.amount} фантиків!`, "Щоденна Винагорода!");
             updateBalanceAndProgressDisplay();
-            if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Daily Bonus claimed: ${data.amount}`);
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Daily Bonus claimed: ${data.amount}`);
         } else {
             showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка.'}`, "Помилка Винагороди");
             messageDiv.className = 'text-red-500 font-bold';
             updateBalanceAndProgressDisplay();
-            if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Daily Bonus API failed: ${data.error || 'Unknown'}`);
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Daily Bonus API failed: ${data.error || 'Unknown'}`);
         }
     } catch (error) {
         console.error('[Daily Bonus] Помилка при отриманні щоденної винагороди:', error);
@@ -354,7 +374,7 @@ dailyBonusButton.addEventListener('click', async () => {
         messageDiv.className = 'text-red-500 font-bold';
         dailyBonusButton.disabled = false;
         dailyBonusButton.classList.add('pulsing');
-        if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Daily Bonus network error: ${error.message}`);
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Daily Bonus network error: ${error.message}`);
     }
 });
 
@@ -402,11 +422,11 @@ function updateQuickBonusButton(lastClaimTime) {
 quickBonusButton.addEventListener('click', async () => {
     if (!userId) {
         showCustomModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб отримати User ID.', "Недоступно");
-        if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Quick Bonus clicked - no user ID.');
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Quick Bonus clicked - no user ID.');
         return;
     }
     if (quickBonusButton.disabled) {
-        if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Quick Bonus clicked - button disabled.');
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Quick Bonus clicked - button disabled.');
         return;
     }
 
@@ -416,7 +436,7 @@ quickBonusButton.addEventListener('click', async () => {
     quickBonusCooldownSpan.textContent = '';
 
     messageDiv.textContent = 'Отримуємо швидкий бонус...';
-    if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Attempting to claim quick bonus...');
+    if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Attempting to claim quick bonus...');
 
     try {
         const response = await fetch(`${API_BASE_URL}/api/claim_quick_bonus`, {
@@ -431,12 +451,12 @@ quickBonusButton.addEventListener('click', async () => {
             playQuickBonusSound();
             showCustomModal(`💰 Ви отримали ${data.amount} фантиків!`, "Швидкий Бонус!");
             updateBalanceAndProgressDisplay();
-            if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Quick Bonus claimed: ${data.amount}`);
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Quick Bonus claimed: ${data.amount}`);
         } else {
             showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка.'}`, "Помилка Бонусу");
             messageDiv.className = 'text-red-500 font-bold';
             updateBalanceAndProgressDisplay();
-            if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Quick Bonus API failed: ${data.error || 'Unknown'}`);
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Quick Bonus API failed: ${data.error || 'Unknown'}`);
         }
     } catch (error) {
         console.error('[Quick Bonus] Помилка при отриманні швидкого бонусу:', error);
@@ -444,7 +464,7 @@ quickBonusButton.addEventListener('click', async () => {
         messageDiv.className = 'text-red-500 font-bold';
         quickBonusButton.disabled = false;
         quickBonusButton.classList.add('pulsing');
-        if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Quick Bonus network error: ${error.message}`);
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Quick Bonus network error: ${error.message}`);
     }
 });
 
@@ -456,17 +476,17 @@ quickBonusButton.addEventListener('click', async () => {
 // Додамо перевірку на існування елементу перед додаванням слухача подій
 if (leaderboardButton) {
     console.log("[Leaderboard] Leaderboard button element found. Attaching event listener.");
-    if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Leaderboard button found.');
+    if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Leaderboard button found. Attaching listener.');
 
     leaderboardButton.addEventListener('click', async () => {
         console.log("[Leaderboard] Leaderboard button clicked.");
-        if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Leaderboard button click event fired.');
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Leaderboard button click event fired.');
 
         // Забезпечуємо, що модалка існує, перш ніж звертатися до її властивостей
         if (!leaderboardModal) {
             console.error("[Leaderboard] Leaderboard modal element not found!");
             showCustomModal('🚫 Помилка: елемент модального вікна лідерів не знайдено.', "Помилка UI");
-            if (Telegram.WebApp) Telegram.WebApp.sendData('JS_ERROR: Leaderboard modal element missing.');
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_ERROR: Leaderboard modal element missing.');
             return;
         }
 
@@ -474,7 +494,7 @@ if (leaderboardButton) {
         leaderboardLoading.classList.remove('hidden'); // Показати завантаження
         leaderboardError.classList.add('hidden'); // Приховати помилку
         leaderboardModal.classList.add('active'); // Показати модалку (додаємо клас 'active')
-        if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Leaderboard modal activated, fetching data...');
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Leaderboard modal activated, fetching data...');
 
         try {
             const response = await fetch(`${API_BASE_URL}/api/get_leaderboard`, {
@@ -484,20 +504,20 @@ if (leaderboardButton) {
             });
 
             console.log("[Leaderboard] API response status:", response.status);
-            if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Leaderboard API response status: ${response.status}`);
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Leaderboard API response status: ${response.status}`);
 
             if (!response.ok) {
                 const errData = await response.json();
                 console.error("[Leaderboard] API error data:", errData);
                 leaderboardError.textContent = `Помилка: ${errData.error || 'Невідома помилка при завантаженні лідерів.'}`;
                 leaderboardError.classList.remove('hidden');
-                if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Leaderboard API failed: ${errData.error || 'Unknown'}`);
+                if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Leaderboard API failed: ${errData.error || 'Unknown'}`);
                 return;
             }
 
             const data = await response.json();
             console.log("[Leaderboard] data received:", data);
-            if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Leaderboard data received (count: ${data.leaderboard ? data.leaderboard.length : 0})`);
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Leaderboard data received (count: ${data.leaderboard ? data.leaderboard.length : 0})`);
 
             if (data.leaderboard && data.leaderboard.length > 0) {
                 data.leaderboard.sort((a, b) => {
@@ -519,19 +539,19 @@ if (leaderboardButton) {
                     `;
                     leaderboardTableBody.insertAdjacentHTML('beforeend', row);
                 });
-                if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Leaderboard table populated.');
+                if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Leaderboard table populated.');
             } else {
                 leaderboardTableBody.innerHTML = '<tr><td colspan="5" class="py-4 text-center text-gray-400">Наразі немає лідерів. Будь першим!</td></tr>';
-                if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Leaderboard is empty.');
+                if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Leaderboard is empty.');
             }
         } catch (error) {
             console.error('[Leaderboard] Помилка при завантаженні дошки лідерів:', error);
             leaderboardError.textContent = '🚫 Не вдалося зʼєднатись із сервером для завантаження дошки лідерів.';
             leaderboardError.classList.remove('hidden');
-            if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Leaderboard network error: ${error.message}`);
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Leaderboard network error: ${error.message}`);
         } finally {
             leaderboardLoading.classList.add('hidden');
-            if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Leaderboard fetch complete.');
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Leaderboard fetch complete.');
         }
     });
 
@@ -540,16 +560,16 @@ if (leaderboardButton) {
         leaderboardModal.querySelector('.close-button').addEventListener('click', () => {
             console.log("[Leaderboard] Leaderboard modal close button clicked.");
             leaderboardModal.classList.remove('active');
-            if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Leaderboard modal closed.');
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Leaderboard modal closed.');
         });
     } else {
         console.error("[Leaderboard] Leaderboard modal or its close button not found for close listener.");
-        if (Telegram.WebApp) Telegram.WebApp.sendData('JS_ERROR: Leaderboard modal close button missing.');
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_ERROR: Leaderboard modal close button missing.');
     }
 
 } else {
     console.error("[Leaderboard] Leaderboard button element not found! Ensure ID 'leaderboardButton' is correct in index.html.");
-    if (Telegram.WebApp) Telegram.WebApp.sendData('JS_ERROR: Leaderboard button HTML element not found.');
+    if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_ERROR: Leaderboard button HTML element not found.');
 }
 
 
@@ -611,14 +631,14 @@ function animateReels(reels, finalSymbols) {
 spinButton.addEventListener('click', async () => {
     if (!userId) {
         showCustomModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб отримати User ID.', "Недоступно");
-        if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Spin clicked - no user ID.');
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Spin clicked - no user ID.');
         return;
     }
 
     spinButton.disabled = true;
     spinButton.classList.remove('pulsing');
     messageDiv.textContent = '';
-    if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Spin button clicked, starting spin process.');
+    if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Spin button clicked, starting spin process.');
 
     reelElements.forEach((reel) => {
         const reelContent = reel.querySelector('.reel-content');
@@ -645,34 +665,34 @@ spinButton.addEventListener('click', async () => {
                 if (data.winnings >= 500) {
                     messageDiv.className = 'message big-win-message';
                     playBigWinSoundEffect();
-                    if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Big Win! ${data.winnings} coins.`);
+                    if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Big Win! ${data.winnings} coins.`);
                 } else {
                     messageDiv.className = 'message win-message';
                     playWinSoundEffect();
-                    if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Win! ${data.winnings} coins.`);
+                    if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: Win! ${data.winnings} coins.`);
                 }
             } else {
                 messageDiv.textContent = '😢 Спробуйте ще раз!';
                 messageDiv.className = 'message lose-message text-red-400';
                 playLoseSoundEffect();
-                if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Lose on spin.');
+                if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Lose on spin.');
             }
         } else {
             showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка сервера.'}`, "Помилка Спіна");
             messageDiv.className = 'text-red-500 font-bold';
             playLoseSoundEffect();
-            if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Spin API failed: ${data.error || 'Unknown'}`);
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Spin API failed: ${data.error || 'Unknown'}`);
         }
     } catch (error) {
         console.error('[Spin] Помилка при спіні:', error);
         showCustomModal('🚫 Не вдалося зʼєднатись із сервером. Перевірте зʼєднання.', "Помилка");
         messageDiv.className = 'text-red-500 font-bold';
         playLoseSoundEffect();
-        if (Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Spin network error: ${error.message}`);
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_ERROR: Spin network error: ${error.message}`);
     } finally {
         spinButton.disabled = false;
         spinButton.classList.add('pulsing');
-        if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Spin process finished.');
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Spin process finished.');
     }
 });
 
@@ -681,28 +701,28 @@ spinButton.addEventListener('click', async () => {
 // =================================================================
 window.onload = () => {
     console.log("[Init] Window loaded.");
-    if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Window loaded, starting init checks.');
+    if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Window loaded, starting init checks.');
 
     // Включаємо аудіо контекст, якщо він ще не запущений
     if (Tone.context.state !== 'running') {
         audioPrompt.style.display = 'flex';
         console.log("[Init] AudioContext not running, showing prompt.");
-        if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: AudioContext prompt visible.');
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: AudioContext prompt visible.');
     } else {
         audioPrompt.style.display = 'none';
         console.log("[Init] AudioContext already running, hiding prompt.");
-        if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: AudioContext already running.');
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: AudioContext already running.');
     }
 
     // Завантажуємо дані користувача тільки якщо userId вже доступний
     if (userId) {
         console.log("[Init] User ID available, updating balance and progress display.");
-        if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Fetching initial user data...');
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Fetching initial user data...');
         updateBalanceAndProgressDisplay();
     } else {
         console.warn("[Init] User ID not available, displaying Telegram launch message.");
         messageDiv.textContent = '⚠️ Будь ласка, запустіть гру через Telegram.';
         messageDiv.className = 'text-yellow-400';
-        if (Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: No User ID, app needs Telegram launch.');
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: No User ID, app needs Telegram launch.');
     }
 };
