@@ -3,38 +3,40 @@
 /* Import Inter font */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800;900&display=swap');
 
-/* Base Body Styles (Tailwind handles most, but define font here) */
-body {
+/* Base Body Styles */
+html, body {
     font-family: 'Inter', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-}
-
-/* Casino Frame - Outer Container Styling */
-.casino-frame {
-    /* Removed fixed max-width and padding to allow full screen */
-    /* Tailwind handles flex, margin, padding, rounded, shadow, border */
-    position: relative;
-    overflow: hidden; /* For decorative elements */
-    z-index: 10; /* Ensure it's above potential background animations */
-    /* Ensure it takes full height/width on smaller screens */
-    height: 100vh; /* Full viewport height */
-    max-width: none; /* No max-width constraint */
-    border-radius: 0; /* No rounded corners for full screen */
-    padding: 0; /* No padding */
-    box-shadow: none; /* No outer shadow */
-}
-
-/* Container for content inside the frame, with proper padding */
-.casino-frame > div:nth-child(2) { /* This targets the second div inside casino-frame, which is the main content area */
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: flex-start; /* Align content to top, but allow it to center if space is available */
     width: 100%;
-    height: calc(100vh - 4rem); /* Full height minus top bar height (h-16 = 4rem) */
-    padding-top: 2rem; /* Add some top padding below the top bar */
-    padding-bottom: 2rem; /* Add some bottom padding */
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden; /* Prevent body scroll, game content will scroll */
+}
+
+/* Main App Container - takes full screen, no outer frame/shadow */
+.casino-app-container {
+    /* Tailwind classes: w-full h-full flex flex-col items-center justify-between */
+    background: none; /* No specific background, use body's gradient */
+    border-radius: 0; /* No rounded corners */
+    box-shadow: none; /* No shadow */
+    padding: 0; /* No padding */
+}
+
+/* Header Bar at the top */
+.app-header {
+    /* Tailwind classes: w-full h-16 bg-gradient-to-b from-yellow-700 to-yellow-900 shadow-lg ... */
+    flex-shrink: 0; /* Prevent header from shrinking */
+}
+
+/* Main Game Content Area - this is the scrollable part */
+.game-content-scrollable {
+    /* Tailwind classes: flex-grow flex flex-col items-center justify-start p-4 md:p-8 overflow-y-auto w-full */
+    /* flex-grow allows it to take remaining vertical space */
+    /* overflow-y-auto ensures scrollability */
+    padding-top: 1.5rem; /* Additional padding if needed to clear header content */
+    padding-bottom: 1.5rem; /* Additional padding if needed for bottom elements */
 }
 
 
@@ -159,14 +161,7 @@ h1 {
     box-shadow: inset 0 2px 5px rgba(0,0,0,0.3); /* Press effect */
 }
 
-/* Daily Bonus Button */
-.daily-bonus-button {
-    min-height: 60px;
-    /* Tailwind handles most */
-    letter-spacing: 0.02em;
-}
-
-/* Game Controls layout adjustments */
+/* Game Controls layout adjustments (now only spin button) */
 .game-controls {
     width: 90%; /* Responsive width */
     max-width: 450px; /* Max width for larger screens */

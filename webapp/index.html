@@ -16,22 +16,25 @@
     <!-- Telegram WebApp Script -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
-<!-- Removed padding from body, added min-h-screen to ensure it always fills view -->
-<body class="flex items-center justify-center min-h-screen bg-gradient-to-br from-purple-900 via-gray-900 to-indigo-900 text-white overflow-hidden">
+<!-- Body тепер займає всю висоту, без зайвих відступів -->
+<body class="flex items-center justify-center w-screen h-screen bg-gradient-to-br from-purple-900 via-gray-900 to-indigo-900 text-white overflow-hidden">
 
-    <!-- Removed casino-frame padding and border to make it visually full screen -->
-    <div class="casino-frame relative w-full h-full min-h-screen max-w-none mx-auto bg-gray-900 rounded-none shadow-none p-0 flex flex-col items-center justify-center">
-        <!-- Decorative top bar - Adjusted positioning -->
-        <div class="absolute top-0 left-0 w-full h-16 bg-gradient-to-b from-yellow-700 to-yellow-900 shadow-md flex items-center justify-center text-xl font-bold text-gray-900 uppercase tracking-widest z-10">
+    <!-- Головний контейнер додатку, що займає весь екран. Рамки прибрано. -->
+    <div class="casino-app-container relative w-full h-full flex flex-col items-center justify-between">
+        
+        <!-- Декоративна верхня панель -->
+        <div class="app-header w-full h-16 bg-gradient-to-b from-yellow-700 to-yellow-900 shadow-lg flex items-center justify-center text-xl font-bold text-gray-900 uppercase tracking-widest z-10">
             Імперія Слота
         </div>
-        <div class="absolute top-16 w-full flex-grow p-4 md:p-8 flex flex-col items-center justify-center">
-            <h1 class="text-4xl md:text-5xl font-extrabold text-yellow-400 mb-6 md:mb-8 drop-shadow-lg leading-tight text-center mt-8">
+
+        <!-- Основний контент гри - дозволяє прокрутку -->
+        <div class="game-content-scrollable flex-grow flex flex-col items-center justify-start p-4 md:p-8 overflow-y-auto w-full">
+            <h1 class="text-4xl md:text-5xl font-extrabold text-yellow-400 mb-6 md:mb-8 drop-shadow-lg leading-tight text-center mt-4">
                 Віртуальне Казино
             </h1>
 
             <!-- Balance and Level Display -->
-            <div class="balance-area bg-gray-800 rounded-xl py-3 px-6 mb-6 md:mb-8 flex flex-col justify-center items-center shadow-inner border border-gray-700 w-11/12 md:w-full max-w-sm">
+            <div class="balance-area bg-gray-800 rounded-xl py-3 px-6 mb-6 md:mb-8 flex flex-col justify-center items-center shadow-inner border border-gray-700 w-full max-w-sm">
                 <div class="flex justify-between items-center w-full mb-2">
                     <span class="text-lg md:text-xl text-gray-300 font-medium">Ваш баланс:</span>
                     <span id="userBalance" class="font-bold text-yellow-300 text-3xl md:text-4xl">0</span>
@@ -49,7 +52,7 @@
             </div>
 
             <!-- Slot Machine Reels -->
-            <div class="slot-machine flex justify-center gap-2 md:gap-4 mb-8 md:mb-10 w-11/12 max-w-sm mx-auto relative px-2 py-4">
+            <div class="slot-machine flex justify-center gap-2 md:gap-4 mb-8 md:mb-10 w-full max-w-sm mx-auto relative px-2 py-4">
                 <!-- Decorative light bar above reels -->
                 <div class="absolute -top-4 left-1/2 transform -translate-x-1/2 w-3/4 h-3 bg-gradient-to-r from-yellow-400 to-red-500 rounded-t-lg shadow-lg"></div>
                 <!-- Reel 1 -->
@@ -68,23 +71,21 @@
                 <div class="absolute -bottom-4 left-1/2 transform -translate-x-1/2 w-3/4 h-3 bg-gradient-to-r from-red-500 to-yellow-400 rounded-b-lg shadow-lg"></div>
             </div>
 
-            <!-- Game Controls -->
-            <div class="game-controls flex flex-col md:flex-row gap-4 mb-6 md:mb-8 w-11/12 md:w-full max-w-sm">
+            <!-- Game Controls (Spin button only) -->
+            <div class="game-controls flex flex-col items-center gap-4 mb-6 md:mb-8 w-full max-w-sm">
                 <button id="spinButton" class="spin-button bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-extrabold py-4 px-8 rounded-full text-xl md:text-2xl shadow-xl transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 w-full uppercase tracking-wider pulsing flex items-center justify-center">
                     Крутити! (Ставка: 100)
                 </button>
-                <button id="dailyBonusButton" class="daily-bonus-button bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-bold py-3 px-6 rounded-full text-lg shadow-lg transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex items-center justify-center whitespace-nowrap mt-4 md:mt-0">
-                    Щоденний Бонус <span id="dailyBonusCooldown" class="ml-2 text-sm text-blue-200"></span>
-                </button>
+                <!-- dailyBonusButton - ВИДАЛЕНО -->
             </div>
             
-            <div id="message" class="message text-lg md:text-xl font-semibold mt-6 min-h-[40px] flex items-center justify-center text-center w-11/12 md:w-full max-w-sm">
+            <div id="message" class="message text-lg md:text-xl font-semibold mt-6 min-h-[40px] flex items-center justify-center text-center w-full max-w-sm">
                 <!-- Messages will appear here -->
             </div>
         </div>
 
-        <!-- Audio Context Activation Prompt -->
-        <div id="audioPrompt" class="audio-prompt absolute inset-0 bg-gray-900 bg-opacity-95 flex flex-col items-center justify-center rounded-3xl text-center p-8 z-20 hidden">
+        <!-- Audio Context Activation Prompt (поверх всього) -->
+        <div id="audioPrompt" class="audio-prompt fixed inset-0 bg-gray-900 bg-opacity-95 flex flex-col items-center justify-center text-center p-8 z-50 hidden">
             <p class="text-xl md:text-2xl font-bold mb-4">Натисніть, щоб увімкнути звук</p>
             <button id="activateAudioButton" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-full text-lg shadow-lg transition-all duration-300 ease-in-out">
                 Увімкнути
@@ -92,7 +93,7 @@
         </div>
     </div>
 
-    <!-- Custom Modal for Alerts -->
+    <!-- Custom Modal for Alerts (поверх всього) -->
     <div id="customModal" class="modal fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-70 hidden">
         <div class="modal-content bg-gray-800 rounded-xl shadow-2xl p-6 md:p-8 text-center w-11/12 max-w-sm relative border-2 border-yellow-400">
             <button class="close-button absolute top-2 right-4 text-gray-400 hover:text-white text-3xl font-bold transition-colors duration-200" onclick="document.getElementById('customModal').style.display='none'">&times;</button>

@@ -7,8 +7,8 @@ const userLevelSpan = document.getElementById('userLevel');
 const userXpSpan = document.getElementById('userXp');
 const nextLevelXpSpan = document.getElementById('nextLevelXp');
 const xpProgressBar = document.getElementById('xpProgressBar');
-const dailyBonusButton = document.getElementById('dailyBonusButton');
-const dailyBonusCooldownSpan = document.getElementById('dailyBonusCooldown');
+// const dailyBonusButton = document.getElementById('dailyBonusButton'); // ВИДАЛЕНО
+// const dailyBonusCooldownSpan = document.getElementById('dailyBonusCooldown'); // ВИДАЛЕНО
 
 const reelElements = [
     document.getElementById('reel1'),
@@ -54,8 +54,8 @@ const LEVEL_THRESHOLDS = [
     10000 // Level 12: 10000 XP
 ];
 
-const DAILY_BONUS_AMOUNT = 300; // Ця сума має збігатися з бекендом
-const DAILY_BONUS_COOLDOWN_HOURS = 24; // Цей кулдаун має збігатися з бекендом
+// const DAILY_BONUS_AMOUNT = 300; // ВИДАЛЕНО
+// const DAILY_BONUS_COOLDOWN_HOURS = 24; // ВИДАЛЕНО
 
 // =================================================================
 // 🧠 Ініціалізація Telegram WebApp
@@ -64,6 +64,7 @@ let userId = null; // ID користувача Telegram
 let lastKnownUserBalance = 0; // Для оптимізації оновлення балансу
 let lastKnownUserXP = 0; // Для оптимізації оновлення XP
 let lastKnownUserLevel = 1; // Для оптимізації оновлення рівня
+// let dailyBonusCountdownInterval = null; // ВИДАЛЕНО
 
 if (typeof Telegram !== 'undefined' && Telegram.WebApp && Telegram.WebApp.initDataUnsafe?.user?.id) {
     userId = Telegram.WebApp.initDataUnsafe.user.id;
@@ -75,7 +76,7 @@ if (typeof Telegram !== 'undefined' && Telegram.WebApp && Telegram.WebApp.initDa
     messageDiv.className = 'text-yellow-400 font-bold';
     spinButton.disabled = true;
     spinButton.classList.remove('pulsing');
-    dailyBonusButton.disabled = true;
+    // dailyBonusButton.disabled = true; // ВИДАЛЕНО
 }
 
 // 🌐 URL бекенду (твій актуальний Render URL)
@@ -85,7 +86,7 @@ const API_BASE_URL = 'https://casino-0h0l.onrender.com';
 // =================================================================
 // 🔊 Ініціалізація звукових ефектів (Tone.js)
 // =================================================================
-let spinStartSound, reelStopSound, winSound, bigWinSound, loseSound, levelUpSound, dailyBonusSound;
+let spinStartSound, reelStopSound, winSound, bigWinSound, loseSound, levelUpSound; // ВИДАЛЕНО dailyBonusSound
 
 function createSynthSound(options = {}) {
     const defaultOptions = {
@@ -132,7 +133,7 @@ async function setupSounds() {
     bigWinSound = createSynthSound({ type: "PolySynth", oscillator: { type: "triangle" }, envelope: { attack: 0.05, decay: 0.5, sustain: 0.2, release: 1.0 } });
     loseSound = createSynthSound({ type: "MembraneSynth", oscillator: { type: "square" }, envelope: { attack: 0.01, decay: 0.3, sustain: 0.1, release: 0.4 } });
     levelUpSound = createSynthSound({ type: "PolySynth", oscillator: { type: "sawtooth" }, envelope: { attack: 0.02, decay: 0.3, sustain: 0.2, release: 0.8 } });
-    dailyBonusSound = createSynthSound({ type: "MembraneSynth", oscillator: { type: "triangle" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 } });
+    // dailyBonusSound = createSynthSound({ type: "MembraneSynth", oscillator: { type: "triangle" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 } }); // ВИДАЛЕНО
 }
 
 // Запускаємо ініціалізацію звуків після першої взаємодії користувача
@@ -151,7 +152,7 @@ function playWinSoundEffect() { if (winSound && Tone.context.state === 'running'
 function playBigWinSoundEffect() { if (bigWinSound && Tone.context.state === 'running') bigWinSound.triggerAttackRelease(["C5", "G5", "C6"], "1n"); }
 function playLoseSoundEffect() { if (loseSound && Tone.context.state === 'running') loseSound.triggerAttackRelease("C3", "4n"); }
 function playLevelUpSound() { if (levelUpSound && Tone.context.state === 'running') levelUpSound.triggerAttackRelease(["E4", "G4", "C5"], "0.8n"); }
-function playDailyBonusSound() { if (dailyBonusSound && Tone.context.state === 'running') dailyBonusSound.triggerAttackRelease("G4", "0.5n"); }
+// function playDailyBonusSound() { if (dailyBonusSound && Tone.context.state === 'running') dailyBonusSound.triggerAttackRelease("G4", "0.5n"); } // ВИДАЛЕНО
 
 
 // =================================================================
@@ -197,7 +198,7 @@ async function updateBalanceAndProgressDisplay() {
         const currentBalance = data.balance;
         const currentXP = data.xp || 0;
         const currentLevel = data.level || 1;
-        const lastDailyClaim = data.last_daily_bonus_claim ? new Date(data.last_daily_bonus_claim) : null;
+        // const lastDailyClaim = data.last_daily_bonus_claim ? new Date(data.last_daily_bonus_claim) : null; // ВИДАЛЕНО
 
         // Анімація зміни балансу
         if (currentBalance !== lastKnownUserBalance) {
@@ -226,8 +227,8 @@ async function updateBalanceAndProgressDisplay() {
         lastKnownUserLevel = currentLevel;
         
 
-        // Оновлення стану кнопки щоденного бонусу
-        updateDailyBonusButton(lastDailyClaim);
+        // Оновлення стану кнопки щоденного бонусу - ВИДАЛЕНО
+        // updateDailyBonusButton(lastDailyClaim); 
 
         messageDiv.textContent = ''; // Очистити попередні повідомлення
         messageDiv.className = 'text-white'; // Скинути стиль повідомлень
@@ -238,65 +239,9 @@ async function updateBalanceAndProgressDisplay() {
     }
 }
 
-// Логіка для щоденного бонусу
-function updateDailyBonusButton(lastClaimTime) {
-    const now = new Date();
-    const cooldownDuration = DAILY_BONUS_COOLDOWN_HOURS * 60 * 60 * 1000; // у мілісекундах
-
-    if (!lastClaimTime || (now - lastClaimTime) >= cooldownDuration) {
-        dailyBonusButton.disabled = false;
-        dailyBonusButton.classList.add('pulsing');
-        dailyBonusCooldownSpan.textContent = '';
-    } else {
-        dailyBonusButton.disabled = true;
-        dailyBonusButton.classList.remove('pulsing');
-        const timeLeft = cooldownDuration - (now - lastClaimTime);
-        const hours = Math.floor(timeLeft / (1000 * 60 * 60));
-        const minutes = Math.floor((timeLeft % (1000 * 60 * 60)) / (1000 * 60));
-        dailyBonusCooldownSpan.textContent = `(${hours}год ${minutes}хв)`;
-        // Оновлювати таймер кожну хвилину
-        setTimeout(() => updateDailyBonusButton(lastClaimTime), (minutes % 1 === 0 ? 60 : (minutes % 1) * 60) * 1000); 
-    }
-}
-
-dailyBonusButton.addEventListener('click', async () => {
-    if (!userId) {
-        showCustomModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб отримати User ID.', "Недоступно");
-        return;
-    }
-    if (dailyBonusButton.disabled) return; // Запобігти подвійному кліку
-
-    dailyBonusButton.disabled = true;
-    dailyBonusButton.classList.remove('pulsing');
-    messageDiv.textContent = 'Отримуємо бонус...';
-
-    try {
-        const response = await fetch(`${API_BASE_URL}/api/claim_daily_bonus`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ user_id: userId })
-        });
-
-        const data = await response.json();
-
-        if (response.ok) {
-            playDailyBonusSound();
-            showCustomModal(`🎉 Ви отримали ${data.amount} фантиків!`, "Щоденний Бонус!");
-            updateBalanceAndProgressDisplay(); // Оновити баланс і стан кнопки
-        } else {
-            showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка.'}`, "Помилка Бонусу");
-            messageDiv.className = 'text-red-500 font-bold';
-            // Не вмикаємо кнопку одразу, щоб кулдаун спрацював
-            updateBalanceAndProgressDisplay(); // Оновити стан кнопки з врахуванням кулдауну
-        }
-    } catch (error) {
-        console.error('Помилка при отриманні щоденного бонусу:', error);
-        showCustomModal('🚫 Не вдалося зʼєднатись із сервером для бонусу.', "Помилка");
-        messageDiv.className = 'text-red-500 font-bold';
-        dailyBonusButton.disabled = false; // Вмикаємо кнопку лише при справжній помилці мережі
-        dailyBonusButton.classList.add('pulsing');
-    }
-});
+// Логіка для щоденного бонусу - ВИДАЛЕНО
+// function updateDailyBonusButton(lastClaimTime) { ... }
+// dailyBonusButton.addEventListener('click', async () => { ... });
 
 
 // =================================================================
