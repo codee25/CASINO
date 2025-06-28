@@ -41,13 +41,16 @@ html, body {
 /* Quick Bonus Countdown text - smaller, just numbers */
 .quick-bonus-countdown {
     /* Tailwind classes: absolute -top-1 -right-1 bg-red-600 text-white text-xs px-1 py-0.5 rounded-full opacity-0 pointer-events-none transition-opacity duration-200 */
-    font-size: 0.65rem; /* Зменшений розмір шрифту */
+    font-size: 0.6rem; /* Зменшений розмір шрифту */
     font-weight: bold;
     min-width: 2.5rem; /* Ensure it has some width for single digit/letter */
     text-align: center;
     line-height: 1; /* Adjust line height to fit text in small circle */
     white-space: nowrap; /* Prevent countdown from wrapping */
-    transform: translate(25%, -25%); /* Adjust position for better visibility */
+    transform: translate(0, -50%); /* Adjust position for better visibility - changed translate */
+    right: 0; /* Align to the right edge of the button */
+    padding: 2px 4px; /* More padding for visibility */
+    box-sizing: border-box; /* Include padding in width/height calculation */
 }
 .quick-bonus-button.active-countdown .quick-bonus-countdown {
     opacity: 1; /* Show when countdown is active */
@@ -65,6 +68,8 @@ html, body {
     /* flex-grow allows it to take remaining vertical space */
     overflow-y: hidden; /* Prevent scrolling here */
     justify-content: space-around; /* Distribute space evenly */
+    padding-top: 1rem; /* Adjust padding to avoid header overlap */
+    padding-bottom: 1rem; /* Adjust padding to avoid bottom overlap */
 }
 
 
@@ -82,7 +87,7 @@ h1 {
     width: 95%; /* Make it responsive, slightly wider */
     max-width: 420px; /* Adjusted max width */
     padding: 0.75rem 1rem; /* Slightly reduced padding */
-    margin-bottom: 1rem; /* Reduced margin */
+    margin-bottom: 0.75rem; /* Reduced margin */
 }
 
 /* XP Bar Styling */
@@ -114,7 +119,7 @@ h1 {
     box-shadow: inset 0 0 15px rgba(0,0,0,0.7), 0 0 20px rgba(255,204,0,0.5);
     width: 95%; /* Responsive width */
     max-width: 400px; /* Max width for larger screens */
-    margin-bottom: 1rem; /* Reduced margin */
+    margin-bottom: 0.75rem; /* Reduced margin */
 }
 
 /* Individual Reel Styling */
@@ -127,12 +132,11 @@ h1 {
     box-shadow: inset 0 0 15px rgba(0,0,0,0.5), 0 0 10px rgba(255,204,0,0.3); /* Inner and outer glow */
     border-radius: 8px;
     transition: filter 0.1s ease-out; /* For quick blur changes */
-    /* Adjust reel dimensions for better fit on screen */
-    width: 22vw; /* Use viewport width for responsive size */
-    height: 22vw; /* Keep aspect ratio */
-    max-width: 100px; /* Max size for larger screens */
+    width: 22vw;
+    height: 22vw;
+    max-width: 100px;
     max-height: 100px;
-    border-width: 3px; /* Slightly thinner border */
+    border-width: 3px;
 }
 
 /* Reel Content - The actual moving part inside the reel */
@@ -149,23 +153,22 @@ h1 {
 /* Individual Symbol within the reel */
 .reel-symbol {
     font-family: 'Inter', sans-serif;
-    font-size: 3em; /* Slightly smaller symbols for better fit */
-    font-weight: 800; /* Extra bold */
+    font-size: 3em;
+    font-weight: 800;
     height: 90px; /* Adjusted fixed height for each symbol for animation calculation */
-    line-height: 1; /* Remove extra line height */
+    line-height: 1;
     display: flex;
     align-items: center;
     justify-content: center;
     width: 100%;
-    user-select: none; /* Prevent text selection */
-    text-shadow: 2px 2px 4px rgba(0,0,0,0.7), 0 0 15px rgba(255,255,255,0.5); /* Glow effect for symbols */
-    transition: filter 0.2s ease; /* For blur effect */
+    user-select: none;
+    text-shadow: 2px 2px 4px rgba(0,0,0,0.7), 0 0 15px rgba(255,255,255,0.5);
+    transition: filter 0.2s ease;
 }
-/* Ensure symbol height scales with reel size on mobile */
 @media (max-width: 768px) {
     .reel-symbol {
-        font-size: 2.5em; /* Even smaller symbols for very small screens */
-        height: 75px; /* Adjusted height */
+        font-size: 2.5em;
+        height: 75px;
     }
     .reel {
         width: 75px;
@@ -176,14 +179,13 @@ h1 {
 
 /* Spin Button Styling */
 .spin-button {
-    /* Tailwind handles background, text, font, padding, rounded, text-size, shadow, transition, transform */
-    letter-spacing: 0.05em; /* More spacious text */
+    letter-spacing: 0.05em;
     position: relative;
     overflow: hidden;
-    z-index: 1; /* Ensure glow/hover effects are above other elements */
-    min-height: 50px; /* Ensure consistent button height */
-    flex-grow: 1; /* Allow it to grow */
-    font-size: 1.125rem; /* Default text-xl is 1.25rem, adjusted to be smaller */
+    z-index: 1;
+    min-height: 50px;
+    flex-grow: 1;
+    font-size: 1.125rem;
 }
 .spin-button:before {
     content: '';
@@ -201,59 +203,57 @@ h1 {
     width: 200%;
 }
 .spin-button:active {
-    box-shadow: inset 0 2px 5px rgba(0,0,0,0.3); /* Press effect */
+    box-shadow: inset 0 2px 5px rgba(0,0,0,0.3);
 }
 
 /* Daily Bonus Button */
 .daily-bonus-button {
-    min-height: 50px; /* Adjusted height */
-    /* Tailwind handles most */
+    min-height: 50px;
     letter-spacing: 0.02em;
-    flex-grow: 1; /* Allow it to grow */
-    font-size: 1.125rem; /* Adjusted text size */
+    flex-grow: 1;
+    font-size: 1.125rem;
 }
 
 /* Game Controls layout adjustments */
 .game-controls {
-    width: 95%; /* Responsive width */
-    max-width: 450px; /* Max width for larger screens */
-    flex-wrap: wrap; /* Allow wrapping on smaller screens if buttons get too wide */
-    justify-content: center; /* Center buttons when wrapped */
-    margin-bottom: 1rem; /* Reduced margin */
+    width: 95%;
+    max-width: 450px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-bottom: 0.75rem; /* Reduced margin */
 }
 @media (min-width: 768px) {
     .game-controls {
-        flex-direction: row; /* Side-by-side on larger screens */
+        flex-direction: row;
     }
     .spin-button, .daily-bonus-button {
-        width: auto; /* Allow buttons to take natural width */
+        width: auto;
     }
 }
 @media (max-width: 767px) {
     .game-controls {
-        flex-direction: column; /* Stack on smaller screens */
+        flex-direction: column;
     }
     .spin-button, .daily-bonus-button {
-        width: 100%; /* Full width on smaller screens */
+        width: 100%;
     }
 }
 
 
 /* Message Area Styling */
 .message {
-    /* Tailwind handles text-size, font-weight, margin, min-height, flex, align, justify, text-center */
-    word-wrap: break-word; /* Ensure long messages break correctly */
-    max-width: 95%; /* Prevent stretching on wide screens */
-    min-height: 25px; /* Slightly reduced min-height */
-    margin-top: 0.5rem; /* Adjusted margin */
+    word-wrap: break-word;
+    max-width: 95%;
+    min-height: 25px;
+    margin-top: 0.5rem;
 }
 .win-message {
-    font-size: 1.3em; /* Adjusted size */
+    font-size: 1.3em;
     text-shadow: 0 0 10px #00ff00, 0 0 20px #00ff00;
     color: #00ff00;
 }
 .big-win-message {
-    font-size: 1.6em; /* Adjusted size */
+    font-size: 1.6em;
     text-shadow: 0 0 15px #ffd700, 0 0 30px #ffd700;
     background: linear-gradient(90deg, #ffd700, #ff8c00, #ffd700);
     background-size: 200% 100%;
@@ -331,26 +331,26 @@ button.pulsing {
 
 /* Leaderboard Table specific styles */
 #leaderboardTableContainer {
-    background-color: rgba(0,0,0,0.3); /* Slightly transparent background */
+    background-color: rgba(0,0,0,0.3);
     border-radius: 8px;
     padding: 0.5rem;
-    max-height: 300px; /* Limit height for scroll if many leaders */
-    overflow-y: auto; /* Allow scrolling for leaderboard table */
+    max-height: 300px;
+    overflow-y: auto;
     border: 1px solid rgba(255,255,255,0.1);
 }
 
 #leaderboardTableBody tr:nth-child(even) {
-    background-color: rgba(255,255,255,0.05); /* Zebra stripping */
+    background-color: rgba(255,255,255,0.05);
 }
 #leaderboardTableBody tr:hover {
-    background-color: rgba(255,255,255,0.1); /* Hover effect */
+    background-color: rgba(255,255,255,0.1);
 }
 #leaderboardTableBody td {
     padding: 0.5rem 0.75rem;
     border-bottom: 1px solid rgba(255,255,255,0.05);
 }
 #leaderboardTableBody tr:last-child td {
-    border-bottom: none; /* No border for the last row */
+    border-bottom: none;
 }
 
 /* Responsive table font sizes */
@@ -360,7 +360,7 @@ button.pulsing {
     }
     #leaderboardTableBody td,
     #leaderboardTableContainer thead th {
-        font-size: 0.75rem; /* Smaller font on mobile */
+        font-size: 0.75rem;
         padding: 0.3rem 0.5rem;
     }
 }

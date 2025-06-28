@@ -20,6 +20,7 @@
             <!-- Кнопка швидкого бонусу -->
             <button id="quickBonusButton" class="quick-bonus-button absolute left-2 md:left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center text-lg font-bold shadow-md transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95 pulsing">
                 💰
+                <!-- Таймер буде лише цифрами -->
                 <span id="quickBonusCooldown" class="quick-bonus-countdown absolute -top-1 -right-1 bg-red-600 text-white text-xs px-1 py-0.5 rounded-full opacity-0 pointer-events-none transition-opacity duration-200"></span>
             </button>
             <!-- Кнопка лідерів -->
@@ -108,7 +109,7 @@
     <!-- Leaderboard Modal (нова модалка) -->
     <div id="leaderboardModal" class="modal fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-70 hidden">
         <div class="modal-content bg-gray-800 rounded-xl shadow-2xl p-6 md:p-8 text-center w-11/12 max-w-lg relative border-2 border-yellow-400">
-            <button class="close-button absolute top-2 right-4 text-gray-400 hover:text-white text-3xl font-bold transition-colors duration-200" onclick="document.getElementById('leaderboardModal').style.display='none'">&times;</button>
+            <button class="close-button absolute top-2 right-4 text-gray-400 hover:text-white text-3xl font-bold transition-colors duration-200" onclick="document.getElementById('leaderboardModal').classList.remove('active')">&times;</button>
             <h2 class="text-3xl font-extrabold text-yellow-400 mb-6">👑 Дошка Лідерів 👑</h2>
             <div id="leaderboardTableContainer" class="overflow-x-auto">
                 <table class="w-full text-left text-sm md:text-base text-gray-300">
