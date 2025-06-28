@@ -94,7 +94,7 @@ PAYOUTS = {
     ('🍒', '🍒', '🍒'): 1000,
     ('🍋', '🍋', '🍋'): 800,
     ('🍊', '🍊', '🍊'): 600,
-    ('�', '🍇', '🍇'): 400,
+    ('🍇', '🍇', '🍇'): 400,
     ('🔔', '🔔', '🔔'): 300,
     ('💎', '💎', '💎'): 200,
     ('🍀', '🍀', '🍀'): 150,
@@ -451,6 +451,26 @@ async def get_free_coins_command(message: Message):
             f"Ваш новий баланс: {updated_user_data['balance']} фантиків. 🎉"
         )
         logger.info(f"User {user_id} claimed {FREE_COINS_AMOUNT} free coins. New balance: {updated_user_data['balance']}.")
+
+
+# Обробник для даних, надісланих з Web App
+@dp.message(lambda msg: msg.web_app_data)
+async def web_app_data_handler(message: Message):
+    user_id = message.from_user.id
+    data_from_webapp = message.web_app_data.data
+    logger.info(f"Received data from WebApp for user {user_id}: {data_from_webapp}")
+
+    # Optionally, respond to the user in Telegram chat
+    if data_from_webapp.startswith('JS_LOG:'):
+        # await message.answer(f"Log з WebApp: {data_from_webapp.replace('JS_LOG:', '').strip()}")
+        logger.info(f"WebApp Log for user {user_id}: {data_from_webapp.replace('JS_LOG:', '').strip()}")
+    elif data_from_webapp.startswith('JS_ERROR:'):
+        # await message.answer(f"Помилка з WebApp: {data_from_webapp.replace('JS_ERROR:', '').strip()}")
+        logger.error(f"WebApp Error for user {user_id}: {data_from_webapp.replace('JS_ERROR:', '').strip()}")
+    else:
+        # Default response for other data if needed
+        # await message.answer(f"Отримано дані з Web App: {data_from_webapp}")
+        logger.info(f"WebApp Data for user {user_id}: {data_from_webapp}")
 
 
 # --- Обробка запитів від Web App (через aiohttp.web) ---
