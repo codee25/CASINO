@@ -14,13 +14,17 @@
 
     <div class="casino-app-container relative w-full h-full flex flex-col items-center justify-start">
         
-        <!-- Верхня панель з назвою та кнопкою швидкого бонусу -->
+        <!-- Верхня панель з назвою, кнопкою швидкого бонусу та кнопкою лідерів -->
         <div class="app-header w-full h-16 bg-gradient-to-b from-yellow-700 to-yellow-900 shadow-lg flex items-center justify-center text-xl font-bold text-gray-900 uppercase tracking-widest z-10 flex-shrink-0 relative">
             Імперія Слота
             <!-- Кнопка швидкого бонусу -->
-            <button id="quickBonusButton" class="quick-bonus-button absolute right-4 w-12 h-12 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center text-lg font-bold shadow-md transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95 pulsing">
+            <button id="quickBonusButton" class="quick-bonus-button absolute left-2 md:left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center text-lg font-bold shadow-md transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95 pulsing">
                 💰
-                <span id="quickBonusCooldown" class="quick-bonus-countdown absolute top-0 right-0 bg-red-600 text-white text-xs px-1 rounded-full opacity-0 pointer-events-none transition-opacity duration-200"></span>
+                <span id="quickBonusCooldown" class="quick-bonus-countdown absolute -top-1 -right-1 bg-red-600 text-white text-xs px-1 py-0.5 rounded-full opacity-0 pointer-events-none transition-opacity duration-200"></span>
+            </button>
+            <!-- Кнопка лідерів -->
+            <button id="leaderboardButton" class="leaderboard-button absolute right-2 md:right-4 top-1/2 -translate-y-1/2 bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold py-2 px-3 rounded-full text-sm shadow-md transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95">
+                👑 Лідери
             </button>
         </div>
 
@@ -98,6 +102,32 @@
             <button class="close-button absolute top-2 right-4 text-gray-400 hover:text-white text-3xl font-bold transition-colors duration-200" onclick="document.getElementById('customModal').style.display='none'">&times;</button>
             <p id="modalMessage" class="text-xl md:text-2xl font-semibold mb-4"></p>
             <button class="bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold py-2 px-6 rounded-full text-lg shadow-md transition-all duration-300" onclick="document.getElementById('customModal').style.display='none'">OK</button>
+        </div>
+    </div>
+
+    <!-- Leaderboard Modal (нова модалка) -->
+    <div id="leaderboardModal" class="modal fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-70 hidden">
+        <div class="modal-content bg-gray-800 rounded-xl shadow-2xl p-6 md:p-8 text-center w-11/12 max-w-lg relative border-2 border-yellow-400">
+            <button class="close-button absolute top-2 right-4 text-gray-400 hover:text-white text-3xl font-bold transition-colors duration-200" onclick="document.getElementById('leaderboardModal').style.display='none'">&times;</button>
+            <h2 class="text-3xl font-extrabold text-yellow-400 mb-6">👑 Дошка Лідерів 👑</h2>
+            <div id="leaderboardTableContainer" class="overflow-x-auto">
+                <table class="w-full text-left text-sm md:text-base text-gray-300">
+                    <thead class="text-xs md:text-sm text-gray-100 uppercase bg-gray-700">
+                        <tr>
+                            <th scope="col" class="py-2 px-3">#</th>
+                            <th scope="col" class="py-2 px-3">Ім'я</th>
+                            <th scope="col" class="py-2 px-3 text-right">Рівень</th>
+                            <th scope="col" class="py-2 px-3 text-right">Баланс</th>
+                            <th scope="col" class="py-2 px-3 text-right">XP</th>
+                        </tr>
+                    </thead>
+                    <tbody id="leaderboardTableBody">
+                        <!-- Leaderboard rows will be injected here by JS -->
+                    </tbody>
+                </table>
+            </div>
+            <p id="leaderboardLoading" class="text-yellow-300 mt-4 hidden">Завантаження...</p>
+            <p id="leaderboardError" class="text-red-500 mt-4 hidden">Помилка завантаження лідерів.</p>
         </div>
     </div>
 

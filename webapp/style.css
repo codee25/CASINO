@@ -28,26 +28,35 @@ html, body {
 .app-header {
     /* Tailwind classes: w-full h-16 bg-gradient-to-b from-yellow-700 to-yellow-900 shadow-lg ... */
     flex-shrink: 0; /* Prevent header from shrinking */
+    position: relative; /* For absolute positioning of buttons */
 }
 
 /* Quick Bonus Button styling */
 .quick-bonus-button {
-    /* Tailwind classes: absolute right-4 w-12 h-12 rounded-full bg-blue-600 ... */
+    /* Tailwind classes: absolute left-2 md:left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-blue-600 ... */
     box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-    overflow: hidden; /* For cooldown text */
+    overflow: visible; /* Allow countdown to overflow */
 }
 
+/* Quick Bonus Countdown text - smaller, just numbers */
 .quick-bonus-countdown {
-    /* Tailwind classes: absolute top-0 right-0 bg-red-600 text-white text-xs px-1 rounded-full opacity-0 pointer-events-none transition-opacity duration-200 */
-    transform: translate(25%, -25%); /* Position it nicely outside the button */
+    /* Tailwind classes: absolute -top-1 -right-1 bg-red-600 text-white text-xs px-1 py-0.5 rounded-full opacity-0 pointer-events-none transition-opacity duration-200 */
+    font-size: 0.65rem; /* Зменшений розмір шрифту */
     font-weight: bold;
     min-width: 2.5rem; /* Ensure it has some width for single digit/letter */
     text-align: center;
     line-height: 1; /* Adjust line height to fit text in small circle */
     white-space: nowrap; /* Prevent countdown from wrapping */
+    transform: translate(25%, -25%); /* Adjust position for better visibility */
 }
 .quick-bonus-button.active-countdown .quick-bonus-countdown {
     opacity: 1; /* Show when countdown is active */
+}
+
+/* Leaderboard Button styling */
+.leaderboard-button {
+    /* Tailwind classes: absolute right-2 md:right-4 top-1/2 -translate-y-1/2 bg-yellow-500 ... */
+    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
 }
 
 /* Main Game Content Area - this is the flexible area that holds all game elements */
@@ -104,7 +113,7 @@ h1 {
     padding: 8px 4px; /* Reduced padding */
     box-shadow: inset 0 0 15px rgba(0,0,0,0.7), 0 0 20px rgba(255,204,0,0.5);
     width: 95%; /* Responsive width */
-    max-width: 400px; /* Adjusted max width for better fit */
+    max-width: 400px; /* Max width for larger screens */
     margin-bottom: 1rem; /* Reduced margin */
 }
 
@@ -162,15 +171,6 @@ h1 {
         width: 75px;
         height: 75px;
     }
-}
-
-
-/* Spinning effect (blur) */
-.reel.spinning {
-    filter: blur(3px); /* Apply blur during rapid spin */
-}
-.reel.stopped {
-    filter: blur(0); /* Remove blur when stopped */
 }
 
 
@@ -329,3 +329,38 @@ button.pulsing {
     100% { background-position: 200% 0; }
 }
 
+/* Leaderboard Table specific styles */
+#leaderboardTableContainer {
+    background-color: rgba(0,0,0,0.3); /* Slightly transparent background */
+    border-radius: 8px;
+    padding: 0.5rem;
+    max-height: 300px; /* Limit height for scroll if many leaders */
+    overflow-y: auto; /* Allow scrolling for leaderboard table */
+    border: 1px solid rgba(255,255,255,0.1);
+}
+
+#leaderboardTableBody tr:nth-child(even) {
+    background-color: rgba(255,255,255,0.05); /* Zebra stripping */
+}
+#leaderboardTableBody tr:hover {
+    background-color: rgba(255,255,255,0.1); /* Hover effect */
+}
+#leaderboardTableBody td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+#leaderboardTableBody tr:last-child td {
+    border-bottom: none; /* No border for the last row */
+}
+
+/* Responsive table font sizes */
+@media (max-width: 768px) {
+    #leaderboardTableContainer {
+        max-height: 250px;
+    }
+    #leaderboardTableBody td,
+    #leaderboardTableContainer thead th {
+        font-size: 0.75rem; /* Smaller font on mobile */
+        padding: 0.3rem 0.5rem;
+    }
+}
