@@ -492,6 +492,7 @@ if (leaderboardButton) {
         leaderboardTableBody.innerHTML = ''; // Очистити попередні дані
         leaderboardLoading.classList.remove('hidden'); // Показати завантаження
         leaderboardError.classList.add('hidden'); // Приховати помилку
+        leaderboardModal.classList.remove('hidden');
         leaderboardModal.classList.add('active'); // Показати модалку (додаємо клас 'active')
         if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Leaderboard modal activated, fetching data...');
 
@@ -555,16 +556,23 @@ if (leaderboardButton) {
     });
 
     // Закриття модалки дошки лідерів
-    if (leaderboardModal && leaderboardModal.querySelector('.close-button')) {
-        leaderboardModal.querySelector('.close-button').addEventListener('click', () => {
-            console.log("[Leaderboard] Leaderboard modal close button clicked.");
-            leaderboardModal.classList.remove('active');
-            if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_LOG: Leaderboard modal closed.');
-        });
-    } else {
-        console.error("[Leaderboard] Leaderboard modal or its close button not found for close listener.");
-        if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData('JS_ERROR: Leaderboard modal close button missing.');
+   const closeBtn = document.getElementById('leaderboardCloseButton');
+if (leaderboardModal && closeBtn) {
+    closeBtn.addEventListener('click', () => {
+        console.log("[Leaderboard] Leaderboard modal close button clicked.");
+        leaderboardModal.classList.remove('active');
+        leaderboardModal.classList.add('hidden');
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
+            Telegram.WebApp.sendData('JS_LOG: Leaderboard modal closed.');
+        }
+    });
+} else {
+    console.error("[Leaderboard] Leaderboard modal or close button not found.");
+    if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
+        Telegram.WebApp.sendData('JS_ERROR: Leaderboard modal close button missing.');
     }
+}
+
 
 } else {
     console.error("[Leaderboard] Leaderboard button element not found! Ensure ID 'leaderboardButton' is correct in index.html.");
