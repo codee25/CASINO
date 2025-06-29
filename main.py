@@ -458,19 +458,26 @@ async def get_free_coins_command(message: Message):
 async def web_app_data_handler(message: Message):
     user_id = message.from_user.id
     data_from_webapp = message.web_app_data.data
+    
+    # Відправляє логи в чат користувачу, але також логує їх на Render.com
     logger.info(f"Received data from WebApp for user {user_id}: {data_from_webapp}")
 
-    # Optionally, respond to the user in Telegram chat
-    if data_from_webapp.startswith('JS_LOG:'):
-        # await message.answer(f"Log з WebApp: {data_from_webapp.replace('JS_LOG:', '').strip()}")
-        logger.info(f"WebApp Log for user {user_id}: {data_from_webapp.replace('JS_LOG:', '').strip()}")
+    if data_from_webapp.startswith('JS_VERY_FIRST_LOG:'):
+        await message.answer(f"✅ WebApp Core Log: {data_from_webapp.replace('JS_VERY_FIRST_LOG:', '').strip()}")
+    elif data_from_webapp.startswith('JS_LOG:'):
+        # Можна не надсилати всі JS_LOGs в чат, щоб не засмічувати його
+        # await message.answer(f"➡️ WebApp Log: {data_from_webapp.replace('JS_LOG:', '').strip()}")
+        pass # Ми все одно бачимо їх у логах Render
+    elif data_from_webapp.startswith('JS_DEBUG:'):
+        # Можна не надсилати всі JS_DEBUGs в чат, щоб не засмічувати його
+        # await message.answer(f"🔍 WebApp Debug: {data_from_webapp.replace('JS_DEBUG:', '').strip()}")
+        pass # Ми все одно бачимо їх у логах Render
     elif data_from_webapp.startswith('JS_ERROR:'):
-        # await message.answer(f"Помилка з WebApp: {data_from_webapp.replace('JS_ERROR:', '').strip()}")
-        logger.error(f"WebApp Error for user {user_id}: {data_from_webapp.replace('JS_ERROR:', '').strip()}")
+        await message.answer(f"❌ WebApp Error: {data_from_webapp.replace('JS_ERROR:', '').strip()}")
     else:
-        # Default response for other data if needed
-        # await message.answer(f"Отримано дані з Web App: {data_from_webapp}")
-        logger.info(f"WebApp Data for user {user_id}: {data_from_webapp}")
+        # Для невідомих типів даних
+        # await message.answer(f"Отримано невідомі дані з Web App: {data_from_webapp}")
+        pass # Ми все одно бачимо їх у логах Render
 
 
 # --- Обробка запитів від Web App (через aiohttp.web) ---
@@ -529,7 +536,7 @@ async def api_claim_daily_bonus(request: Request):
     if last_claim_time and (current_time - last_claim_time) < cooldown_duration:
         time_left = cooldown_duration - (current_time - last_claim_time)
         minutes = int(time_left.total_seconds() // 60)
-        seconds = int(time_left.total_seconds() % 60)
+        seconds = int((time_left.total_seconds() % 3600) % 60) # Уточнено розрахунок секунд
         if time_left.total_seconds() >= 3600:
             hours = int(time_left.total_seconds() // 3600)
             return json_response(

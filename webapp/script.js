@@ -1,12 +1,11 @@
 // =================================================================
-// 🚀 Початкові логи та перевірка WebApp
+// 🚀 АБСОЛЮТНИЙ ПЕРШИЙ ЛОГ: Перевірка ініціалізації WebApp
 // =================================================================
-console.log("[DEBUG-INIT] Script loaded.");
 if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
-    Telegram.WebApp.sendData('JS_DEBUG: Script loaded and Telegram.WebApp detected.');
+    Telegram.WebApp.sendData('JS_VERY_FIRST_LOG: script.js started and Telegram.WebApp is available.');
 } else {
-    console.error("Telegram.WebApp is not detected at script start.");
-    // No Telegram.WebApp.sendData if Telegram.WebApp is completely missing
+    // Якщо Telegram.WebApp не знайдено ВЗАГАЛІ, цей лог не спрацює
+    console.error("JS_VERY_FIRST_ERROR: Telegram.WebApp object is not available at script initialization.");
 }
 
 
@@ -94,7 +93,7 @@ if (typeof Telegram !== 'undefined' && Telegram.WebApp && Telegram.WebApp.initDa
     telegramUsername = Telegram.WebApp.initDataUnsafe.user.username || Telegram.WebApp.initDataUnsafe.user.first_name || `Гравець ${String(userId).slice(-4)}`;
     console.log(`[WebApp Init] Telegram User ID: ${userId}, Username: ${telegramUsername}`);
     Telegram.WebApp.expand();
-    Telegram.WebApp.sendData(`JS_LOG: WebApp Initialized for User: ${userId}`);
+    if (typeof Telegram !== 'undefined' && Telegram.WebApp) Telegram.WebApp.sendData(`JS_LOG: WebApp Initialized for User: ${userId}`);
 } else {
     console.warn('[WebApp Init] Telegram WebApp not found or testing outside Telegram.');
     messageDiv.textContent = '⚠️ Будь ласка, запустіть гру через Telegram.';
@@ -103,11 +102,11 @@ if (typeof Telegram !== 'undefined' && Telegram.WebApp && Telegram.WebApp.initDa
     spinButton.classList.remove('pulsing');
     dailyBonusButton.disabled = true;
     quickBonusButton.disabled = true;
-    if (leaderboardButton) leaderboardButton.disabled = true;
-    if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
+    if (leaderboardButton) leaderboardButton.disabled = true; // Вимкнути кнопку лідерів, якщо WebApp не ініціалізовано
+    if (typeof Telegram !== 'undefined' && Telegram.WebApp) { // Check again before sending
         Telegram.WebApp.sendData('JS_LOG: WebApp NOT Initialized - user ID missing.');
     } else {
-        console.error("Telegram.WebApp object is completely missing. Cannot send logs.");
+        console.error("Telegram.WebApp object is completely missing. Cannot send logs from this block.");
     }
 }
 
