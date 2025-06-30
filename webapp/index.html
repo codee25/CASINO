@@ -71,7 +71,7 @@
             const wsRef = useRef(null);
             const [blackjackRoomState, setBlackjackRoomState] = useState({
                 room_id: null,
-                status: "connecting",
+                status: "disconnected", // Default to disconnected
                 dealer_hand: [],
                 dealer_score: 0,
                 players: [],
@@ -81,7 +81,7 @@
                 max_players: 0,
                 timer: 0
             });
-            const [blackjackGameMessage, setBlackjackGameMessage] = useState("Підключення до гри...");
+            const [blackjackGameMessage, setBlackjackGameMessage] = useState("Натисніть 'Блекджек', щоб приєднатися.");
 
 
             // Backend API URL (ВАШ АКТУАЛЬНИЙ URL!)
@@ -199,9 +199,10 @@
                             sendTelegramLog(`WS Sent (debounced): ${action} with payload ${JSON.stringify(payload).substring(0, 50)}`);
                         } else {
                             sendTelegramLog(`WS Error (debounced): Tried to send ${action} but WebSocket not open. Current readyState: ${wsRef.current ? wsRef.current.readyState : 'null'}`, 'JS_ERROR');
+                            // Only attempt to re-establish if not already connecting
                             if (user.userId && wsRef.current && wsRef.current.readyState !== WebSocket.CONNECTING) {
                                 sendTelegramLog('Attempting to re-establish WS connection after failed debounced send.', 'JS_WARN');
-                                connectBlackjackWebSocket();
+                                // connectBlackjackWebSocket(); // Do not call here, let the component manage it
                             }
                         }
                     }, 500); // Debounce for 500ms
@@ -213,13 +214,14 @@
                         sendTelegramLog(`WS Sent (immediate): ${action} with payload ${JSON.stringify(payload).substring(0, 50)}`);
                     } else {
                         sendTelegramLog(`WS Error (immediate): Tried to send ${action} but WebSocket not open. Current readyState: ${wsRef.current ? wsRef.current.readyState : 'null'}`, 'JS_ERROR');
+                        // Only attempt to re-establish if not already connecting
                         if (user.userId && wsRef.current && wsRef.current.readyState !== WebSocket.CONNECTING) {
                             sendTelegramLog('Attempting to re-establish WS connection after failed immediate send.', 'JS_WARN');
-                            connectBlackjackWebSocket();
+                            // connectBlackjackWebSocket(); // Do not call here, let the component manage it
                         }
                     }
                 }
-            }, [sendTelegramLog, user.userId]); // connectBlackjackWebSocket is now correctly in dependencies
+            }, [sendTelegramLog, user.userId]);
 
             // Blackjack WebSocket Connection Management
             const connectBlackjackWebSocket = useCallback(() => {
@@ -241,12 +243,15 @@
                 if (!wsRef.current) {
                     const websocketUrl = `wss://${new URL(API_BASE_URL).host}/ws/${user.userId}`;
                     sendTelegramLog(`connectBlackjackWebSocket: Attempting to establish NEW WebSocket to: ${websocketUrl}`);
+                    setBlackjackRoomState(prev => ({ ...prev, status: "connecting" })); // Set connecting status
+                    setBlackjackGameMessage("Підключення до гри...");
+
                     const newWs = new WebSocket(websocketUrl);
 
                     newWs.onopen = () => {
                         sendTelegramLog("Blackjack WS: Connected.");
                         setBlackjackGameMessage("Підключено. Шукаємо кімнату...");
-                        // Removed sendWsMessage("request_state") from here - it will be sent by BlackjackGame component on mount
+                        // IMPORTANT: request_state is now sent by BlackjackGame component on mount
                     };
 
                     newWs.onmessage = (event) => {
@@ -266,14 +271,14 @@
                                 fetchUserData();
                             } else if (message.room_id) { // It's a room state update
                                 setBlackjackRoomState(prevState => {
-                                    // We manage the timer locally in BlackjackGame component
-                                    return { ...message, timer: prevState.timer }; // Keep local timer
+                                    // Update local timer only if status is starting_timer, otherwise reset
+                                    const newTimer = message.status === "starting_timer" ? message.timer : 0;
+                                    return { ...message, timer: newTimer }; 
                                 });
                                 // Only update game message if it's not a round result message
                                 if (message.type !== "round_result") {
                                     setBlackjackGameMessage(getGameStatusMessage(message, user.userId));
                                 }
-                                // REMOVED: fetchUserData() from here. User data updates only on round_result or explicit actions.
                             } else if (message.type === "round_result") {
                                 const { message: resultMsg, winnings, balance, xp, level, next_level_xp, final_player_score, final_dealer_score } = message;
                                 setBlackjackGameMessage(resultMsg);
@@ -318,19 +323,18 @@
 
                     wsRef.current = newWs;
                 }
-            }, [user.userId, API_BASE_URL, sendTelegramLog, fetchUserData, sendWsMessage]); // Added sendWsMessage to dependencies
-
+            }, [user.userId, API_BASE_URL, sendTelegramLog, fetchUserData, setUser]); // Removed sendWsMessage from dependencies here
 
             useEffect(() => {
                 fetchUserData(); 
             }, []); 
 
-            // Initialize WebSocket when user data is loaded and available
-            useEffect(() => {
-                if (user.userId && !isLoading && !error) {
-                    connectBlackjackWebSocket();
-                }
-            }, [user.userId, isLoading, error, connectBlackjackWebSocket]);
+            // REMOVED: Automatic WebSocket connection on user data load
+            // useEffect(() => {
+            //     if (user.userId && !isLoading && !error) {
+            //         connectBlackjackWebSocket();
+            //     }
+            // }, [user.userId, isLoading, error, connectBlackjackWebSocket]);
 
             // Cleanup WebSocket on component unmount (when the entire app closes)
             useEffect(() => {
@@ -352,7 +356,15 @@
                 if (!state || !state.room_id) return "Очікування кімнати...";
                 
                 const currentPlayer = state.players.find(p => p.user_id === currentUserId);
-                if (!currentPlayer) return "Ви не в цій кімнаті. Перепідключення...";
+                // If current user is not in the player list of this room, it means they might have just joined
+                // or the room state hasn't fully propagated, or they were removed.
+                if (!currentPlayer && state.status !== "disconnected" && state.status !== "error") {
+                     return "Приєднуємось до гри...";
+                }
+                if (!currentPlayer && (state.status === "disconnected" || state.status === "error")) {
+                    return "Ви відключені від кімнати. Спробуйте оновити.";
+                }
+
 
                 switch (state.status) {
                     case "connecting": return "Підключення до сервера...";
@@ -368,7 +380,7 @@
                         }
                     case "dealer_turn": return "Хід дилера...";
                     case "round_end": return "Раунд завершено. Результати...";
-                    case "disconnected": return "Ви відключені від кімнати. Оновіть сторінку.";
+                    case "disconnected": return "Ви відключені від гри. Спробуйте оновити.";
                     case "error": return "Помилка гри. Спробуйте оновити.";
                     default: return `Статус кімнати: ${state.status}`;
                 }
@@ -378,7 +390,8 @@
             return (
                 <UserContext.Provider value={{ 
                     user, setUser, fetchUserData, isLoading, error, API_BASE_URL, sendTelegramLog,
-                    blackjackRoomState, blackjackGameMessage, sendWsMessage, setBlackjackGameMessage // Expose Blackjack state and send function
+                    blackjackRoomState, blackjackGameMessage, sendWsMessage, setBlackjackGameMessage,
+                    connectBlackjackWebSocket // Expose connect function for BlackjackGame component
                 }}>
                     {children}
                 </UserContext.Provider>
@@ -873,22 +886,27 @@
 
         const BlackjackGame = () => {
             // Now get blackjack state and send function from context
-            const { user, sendTelegramLog, blackjackRoomState, blackjackGameMessage, sendWsMessage, setBlackjackGameMessage } = useUser();
+            const { user, sendTelegramLog, blackjackRoomState, blackjackGameMessage, sendWsMessage, setBlackjackGameMessage, connectBlackjackWebSocket } = useUser();
             const [betInput, setBetInput] = useState(BLACKJACK_BET_AMOUNT);
             const [showBetModal, setShowBetModal] = useState(false);
             // Local state for timer to avoid re-rendering the whole component
             const [localTimer, setLocalTimer] = useState(0); 
 
-            // Effect to request state when component mounts or user ID changes
+            // Effect to connect to WebSocket and request state when component mounts
             useEffect(() => {
                 if (user.userId) {
-                    sendTelegramLog('BlackjackGame component mounted/user changed. Requesting WS state (once).');
-                    sendWsMessage("request_state");
+                    sendTelegramLog('BlackjackGame component mounted. Attempting to connect WS and request state.');
+                    connectBlackjackWebSocket(); // Connect only when Blackjack game is active
+                    // Request state after a short delay to ensure connection is established
+                    const timeoutId = setTimeout(() => {
+                        sendWsMessage("request_state");
+                    }, 500); // Give some time for WS to open
+                    return () => clearTimeout(timeoutId); // Cleanup timeout
                 }
-            }, [user.userId, sendWsMessage, sendTelegramLog]);
+            }, [user.userId, connectBlackjackWebSocket, sendWsMessage, sendTelegramLog]);
+
 
             // Effect to update local timer based on blackjackRoomState.status
-            // This will ensure the timer updates smoothly without re-rendering the whole game
             useEffect(() => {
                 let timerInterval;
                 if (blackjackRoomState.status === "starting_timer" && blackjackRoomState.timer > 0) {
