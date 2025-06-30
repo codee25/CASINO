@@ -4,7 +4,7 @@ import json
 import random
 import urllib.parse
 import asyncio
-import uuid # <--- КРИТИЧНО: ДОДАНО ІМПОРТ МОДУЛЯ UUID
+import uuid # <--- ПЕРЕКОНАЙТЕСЯ, ЩО ЦЕЙ ІМПОРТ Є!
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
@@ -137,8 +137,8 @@ PAYOUTS = {
     ('🍒', '🍒', '🍒'): 1000, ('🍋', '🍋', '🍋'): 800, ('🍊', '🍊', '🍊'): 600,
     ('🍇', '🍇', '🍇'): 400, ('🔔', '🔔', '🔔'): 300, ('💎', '💎', '💎'): 200,
     ('🍀', '🍀', '🍀'): 150, ('⭐', '⭐', '⭐'): 2000, 
-    ('🍒', '🍒'): 100, ('�', '🍋'): 80, ('🍊', '🍊'): 60,
-    ('🍇', '🍇'): 40, ('🔔', '🔔'): 30, ('💎', '💎'): 20,
+    ('🍒', '🍒'): 100, ('🍋', '🍋'): 80, ('🍊', '🍊'): 60,
+    ('�', '🍇'): 40, ('🔔', '🔔'): 30, ('💎', '💎'): 20,
     ('🍀', '🍀'): 10,
     ('💰', '💰'): 200, ('💰', '💰', '💰'): 500,
 }
@@ -754,17 +754,17 @@ class BlackjackRoom:
         await self.send_room_state_to_all(); return True, "Joined room successfully."
     async def remove_player(self, user_id: int):
         if user_id in self.players:
-            del self.players[user_id]; print(f"Player {user_id} removed from room {self.room_id}")
+            del self.players[user_id]; logger.info(f"Player {user_id} removed from room {self.room_id}")
             if not self.players:
                 if self.game_start_timer and not self.game_start_timer.done(): self.game_start_timer.cancel()
-                del blackjack_room_manager.rooms[self.room_id]; print(f"Room {self.room_id} is empty and removed.")
+                del blackjack_room_manager.rooms[self.room_id]; logger.info(f"Room {self.room_id} is empty and removed.")
             else:
                 if self.status == "playing":
                      active_players_after_removal = [p for p in self.players.values() if p.is_playing]
                      if not active_players_after_removal: await self.next_turn()
                      elif self.current_turn_index >= len(active_players_after_removal): self.current_turn_index = 0
                 await self.send_room_state_to_all()
-        else: print(f"Player {user_id} not found in room {self.room_id}")
+        else: logger.warning(f"Player {user_id} not found in room {self.room_id}")
     async def send_room_state_to_all(self):
         state = self.get_current_state()
         for player in self.players.values():
@@ -777,7 +777,7 @@ class BlackjackRoom:
                     player_state["dealer_hand"] = self.dealer_hand.to_json()
                     player_state["dealer_score"] = self.dealer_hand.value
                 await player.websocket.send_json(player_state)
-            except Exception as e: print(f"Error sending state to {player.user_id}: {e}")
+            except Exception as e: logger.error(f"Error sending state to {player.user_id}: {e}", exc_info=True)
     def get_current_state(self):
         players_data = []
         for p_id, p in self.players.items():
@@ -811,7 +811,7 @@ class BlackjackRoom:
         player.bet = amount
         new_balance = user_data["balance"] - amount
         update_user_data(user_id, balance=new_balance); player.has_bet = True
-        print(f"Player {user_id} bet {amount}")
+        logger.info(f"Player {user_id} bet {amount}")
         all_bet = all(p.has_bet for p in self.players.values())
         if all_bet and len(self.players) >= self.min_players:
             self.status = "playing"; await self.start_round()
@@ -844,7 +844,7 @@ class BlackjackRoom:
             await asyncio.sleep(1); await self.dealer_play()
         else: await self.send_room_state_to_all()
     async def start_round(self):
-        print(f"Room {self.room_id}: Starting new round.")
+        logger.info(f"Room {self.room_id}: Starting new round.")
         self.deck = Deck(); self.dealer_hand = Hand(); self.current_turn_index = 0
         for player in self.players.values():
             player.reset_for_round(); player.hand.add_card(self.deck.deal_card()); player.hand.add_card(self.deck.deal_card())
@@ -858,7 +858,7 @@ class BlackjackRoom:
         if not active_players_after_blackjack_check: await self.next_turn() 
         else: await self.send_room_state_to_all() 
     async def dealer_play(self):
-        print(f"Room {self.room_id}: Dealer's turn.")
+        logger.info(f"Room {self.room_id}: Dealer's turn.")
         self.status = "dealer_turn"; await self.send_room_state_to_all()
         await asyncio.sleep(1)
         while self.dealer_hand.value < 17:
@@ -866,7 +866,7 @@ class BlackjackRoom:
             await asyncio.sleep(1)
         await self.end_round()
     async def end_round(self):
-        print(f"Room {self.room_id}: Ending round.")
+        logger.info(f"Room {self.room_id}: Ending round.")
         self.status = "round_end"; dealer_score = self.dealer_hand.value
         for player in self.players.values():
             user_data = get_user_data(player.user_id)
@@ -899,18 +899,18 @@ class BlackjackRoomManager:
             if room.status in ["waiting", "betting"] and len(room.players) < room.max_players:
                 success, msg = await room.add_player(user_id, username, websocket)
                 if success:
-                    print(f"Player {user_id} joined existing room {room_id}. Current players: {len(room.players)}")
+                    logger.info(f"Player {user_id} joined existing room {room_id}. Current players: {len(room.players)}")
                     if len(room.players) >= room.min_players and room.status == "waiting":
                         room.status = "starting_timer"
                         if room.game_start_timer and not room.game_start_timer.done(): room.game_start_timer.cancel()
                         room.timer_countdown = 20
                         room.game_start_timer = asyncio.create_task(self._start_game_after_delay(room_id, 20))
-                        print(f"Room {room_id}: Game start timer initiated for 20 seconds.")
+                        logger.info(f"Room {room_id}: Game start timer initiated for 20 seconds.")
                     await room.send_room_state_to_all(); return room_id
         new_room_id = str(uuid.uuid4())[:8]; new_room = BlackjackRoom(new_room_id)
         self.rooms[new_room_id] = new_room
         success, msg = await new_room.add_player(user_id, username, websocket)
-        if success: print(f"Player {user_id} created and joined new room {new_room_id}"); await new_room.send_room_state_to_all(); return new_room_id
+        if success: logger.info(f"Player {user_id} created and joined new room {new_room_id}"); await new_room.send_room_state_to_all(); return new_room_id
         return None
     async def _start_game_after_delay(self, room_id: str, delay: int):
         room = self.rooms.get(room_id)
@@ -918,12 +918,12 @@ class BlackjackRoomManager:
         for i in range(delay, 0, -1):
             room.timer_countdown = i
             if room.status != "starting_timer" or len(room.players) < room.min_players:
-                print(f"Room {room_id} timer cancelled/interrupted.")
+                logger.info(f"Room {room_id} timer cancelled/interrupted.")
                 if len(room.players) < room.min_players: room.status = "waiting"
                 room.timer_countdown = 0; await room.send_room_state_to_all(); return
             await room.send_room_state_to_all(); await asyncio.sleep(1)
         if room.status == "starting_timer" and len(room.players) >= room.min_players:
-            print(f"Room {room_id}: Timer finished, moving to betting phase."); room.status = "betting"
+            logger.info(f"Room {room_id}: Timer finished, moving to betting phase."); room.status = "betting"
             room.timer_countdown = 0; await room.send_room_state_to_all()
 
 blackjack_room_manager = BlackjackRoomManager()
@@ -935,15 +935,17 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     user_data_db = get_user_data(user_id_int)
     username = user_data_db.get("username", f"Гравець {str(user_id_int)[-4:]}")
     
-    # CRITICAL FIX: Accept the WebSocket connection FIRST
+    logger.info(f"WS: Attempting to accept connection for user {user_id_int} ({username}).") 
     await websocket.accept() 
+    logger.info(f"WS: Connection accepted for user {user_id_int} ({username}).") 
 
     room_id = await blackjack_room_manager.create_or_join_room(user_id_int, username, websocket)
     if not room_id: 
+        logger.error(f"WS: Failed to create or join room for user {user_id_int}.") 
         await websocket.close(code=1008, reason="Could not join/create room.")
         return
 
-    # Now that the connection is accepted and player is in a room, send initial state
+    logger.info(f"WS: User {user_id_int} joined room {room_id}. Sending initial state.") 
     room = blackjack_room_manager.rooms.get(room_id)
     if room:
         await room.send_room_state_to_all()
@@ -951,6 +953,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     try:
         while True:
             data = await websocket.receive_text()
+            logger.info(f"WS: Received message from {user_id_int} in room {room_id}: {data[:50]}...") 
             try:
                 message = json.loads(data); action = message.get("action")
                 room = blackjack_room_manager.rooms.get(room_id)
@@ -963,18 +966,19 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 elif action == "request_state": await room.send_room_state_to_all()
                 else: await websocket.send_json({"type": "error", "message": "Невідома дія."})
             except json.JSONDecodeError:
-                print(f"Received non-JSON message from {user_id_int}: {data}")
+                logger.warning(f"WS: Received non-JSON message from {user_id_int}: {data}")
                 await websocket.send_json({"type": "error", "message": "Неправильний формат повідомлення (очікується JSON)."})
             except Exception as e:
-                print(f"Error handling WebSocket message from {user_id_int}: {e}")
+                logger.error(f"WS: Error handling WebSocket message from {user_id_int}: {e}", exc_info=True)
                 await websocket.send_json({"type": "error", "message": f"Помилка сервера: {str(e)}"})
     except WebSocketDisconnect:
-        print(f"Client {user_id_int} disconnected from room {room_id}.")
+        logger.info(f"WS: Client {user_id_int} disconnected from room {room_id}.")
         room = blackjack_room_manager.rooms.get(room_id)
         if room:
             await room.remove_player(user_id_int)
             if room.players: await room.send_room_state_to_all()
-    except Exception as e: print(f"Unexpected error in WebSocket endpoint for {user_id_int}: {e}")
+    except Exception as e: 
+        logger.error(f"WS: Unexpected error in WebSocket endpoint for {user_id_int}: {e}", exc_info=True)
         
 # --- Serve the main HTML file ---
 @app.get("/")
