@@ -1,6 +1,7 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+
 from pydantic import BaseModel
 import json
 import os
@@ -15,7 +16,11 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.client.default import DefaultBotProperties
-from aiogram.filters import Command # Для фільтрації команд
+from aiogram.filters import CommandStart
+
+@dp.message(CommandStart())
+async def send_welcome(message: Message):
+    await message.answer("Привіт! Натисни кнопку нижче, щоб запустити казино 🎰")
 
 # --- Config and Setup ---
 WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
@@ -56,7 +61,7 @@ LEVEL_XP_REQUIREMENTS = {
 MAX_LEVEL = max(LEVEL_XP_REQUIREMENTS.keys())
 
 # --- Telegram Bot Handlers ---
-@dp.message(Command("start")) # ВИПРАВЛЕНО: Використання Command фільтра
+@dp.message(CommandStart("start")) # ВИПРАВЛЕНО: Використання Command фільтра
 async def start_command_handler(message: types.Message):
     # Get user_id and username
     user_id = str(message.from_user.id)
