@@ -47,7 +47,7 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 # --- Конфігурація гри (збігається з JS фронтендом) ---
-SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀'] # Символ '' виправлено на '💎'
+SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀']
 WILD_SYMBOL = '⭐'
 SCATTER_SYMBOL = '💰'
 ALL_REEL_SYMBOLS = SYMBOLS + [WILD_SYMBOL, SCATTER_SYMBOL]
@@ -106,7 +106,7 @@ PAYOUTS = {
     ('🍇', '🍇', '🍇'): 400,
     ('🔔', '🔔', '🔔'): 300,
     ('💎', '💎', '💎'): 200,
-    ('🍀', '🍀', '🍀'): 150,
+    ('🍀', '�', '🍀'): 150,
     ('⭐', '⭐', '⭐'): 2000, # Високий виграш за три Wild
     
     # Два однакові символи (включаючи Wild як замінник)
@@ -146,6 +146,7 @@ def get_db_connection():
             keepalives_interval=10,
             keepalives_count=5
         )
+        logger.info("Successfully connected to PostgreSQL database.")
         return conn
     except psycopg2.Error as err:
         logger.error(f"DB connection error: {err}")
@@ -216,6 +217,7 @@ def get_user_data(user_id):
         )
         result = cursor.fetchone()
         if result:
+            logger.info(f"Retrieved user {user_id} data: balance={result[1]}, xp={result[2]}, level={result[3]}")
             # Ensure datetime objects are timezone-aware if they aren't already
             last_free_coins_claim_db = result[4]
             if last_free_coins_claim_db and last_free_coins_claim_db.tzinfo is None:
@@ -240,14 +242,16 @@ def get_user_data(user_id):
             }
         else:
             # Initial creation of a new user
+            initial_balance = 10000
             cursor.execute(
                 'INSERT INTO users (user_id, username, balance, xp, level, last_free_coins_claim, last_daily_bonus_claim, last_quick_bonus_claim) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)', 
-                (user_id, 'Unnamed Player', 10000, 0, 1, None, None, None) # Start with 10000 coins
+                (user_id, 'Unnamed Player', initial_balance, 0, 1, None, None, None)
             )
             conn.commit()
+            logger.info(f"Created new user {user_id} with initial balance {initial_balance}.")
             return {
                 'username': 'Unnamed Player',
-                'balance': 10000,
+                'balance': initial_balance,
                 'xp': 0,
                 'level': 1,
                 'last_free_coins_claim': None,
@@ -255,7 +259,7 @@ def get_user_data(user_id):
                 'last_quick_bonus_claim': None
             }
     except Exception as e:
-        logger.error(f"Error getting user data from PostgreSQL for {user_id}: {e}")
+        logger.error(f"Error getting user data from PostgreSQL for {user_id}: {e}", exc_info=True)
         # Return default/error data to prevent app crash
         return {
             'username': 'Error Player', 'balance': 0, 'xp': 0, 'level': 1, 
@@ -272,13 +276,12 @@ def update_user_data(user_id, **kwargs):
         conn = get_db_connection()
         cursor = conn.cursor()
 
-        # Fetch current data to preserve fields not explicitly updated
-        current_data_from_db = get_user_data(user_id) 
+        current_data_from_db = get_user_data(user_id) # Fetch current data to preserve fields not explicitly updated
+        logger.info(f"Before update for {user_id}: {current_data_from_db['balance']} balance, {current_data_from_db['xp']} xp, {current_data_from_db['level']} level.")
 
         update_fields_parts = []
         update_values = []
 
-        # Build fields to update, using kwargs or existing data
         fields_to_update = {
             'username': kwargs.get('username', current_data_from_db['username']),
             'balance': kwargs.get('balance', current_data_from_db['balance']),
@@ -289,7 +292,6 @@ def update_user_data(user_id, **kwargs):
             'last_quick_bonus_claim': kwargs.get('last_quick_bonus_claim', current_data_from_db['last_quick_bonus_claim'])
         }
         
-        # Ensure timestamps are timezone-aware if updated
         for key in ['last_free_coins_claim', 'last_daily_bonus_claim', 'last_quick_bonus_claim']:
             if fields_to_update[key] and fields_to_update[key].tzinfo is None:
                 fields_to_update[key] = fields_to_update[key].replace(tzinfo=timezone.utc)
@@ -311,9 +313,9 @@ def update_user_data(user_id, **kwargs):
 
         cursor.execute(update_query, update_values)
         conn.commit()
-        logger.info(f"User {user_id} data updated.")
+        logger.info(f"User {user_id} data updated. New balance: {fields_to_update['balance']}, XP: {fields_to_update['xp']}, Level: {fields_to_update['level']}.")
     except Exception as e:
-        logger.error(f"Error updating user data in PostgreSQL for {user_id}: {e}")
+        logger.error(f"Error updating user data in PostgreSQL for {user_id}: {e}", exc_info=True)
     finally:
         if conn:
             conn.close()
@@ -323,24 +325,26 @@ def check_win_conditions(symbols):
     """Перевіряє виграшні комбінації для 3-барабанного слота, враховуючи Wild та Scatter."""
     winnings = 0
     s1, s2, s3 = symbols
+    logger.info(f"Checking win conditions for symbols: {symbols}")
 
     # 1. Перевірка Scatter символів (виплачуються незалежно від позиції)
     scatter_count = symbols.count(SCATTER_SYMBOL)
     if scatter_count == 3:
-        return PAYOUTS.get((SCATTER_SYMBOL, SCATTER_SYMBOL, SCATTER_SYMBOL), 0)
+        winnings = PAYOUTS.get((SCATTER_SYMBOL, SCATTER_SYMBOL, SCATTER_SYMBOL), 0)
+        logger.info(f"3 Scatters detected! Winnings: {winnings}")
+        return winnings
     elif scatter_count == 2:
-        return PAYOUTS.get((SCATTER_SYMBOL, SCATTER_SYMBOL), 0)
+        winnings = PAYOUTS.get((SCATTER_SYMBOL, SCATTER_SYMBOL), 0)
+        logger.info(f"2 Scatters detected! Winnings: {winnings}")
+        return winnings
 
     # 2. Перевірка 3-х Wild символів (найвищий виграш)
     if s1 == WILD_SYMBOL and s2 == WILD_SYMBOL and s3 == WILD_SYMBOL:
-        return PAYOUTS.get(('⭐', '⭐', '⭐'), 0)
+        winnings = PAYOUTS.get(('⭐', '⭐', '⭐'), 0)
+        logger.info(f"3 Wilds detected! Winnings: {winnings}")
+        return winnings
 
     # 3. Перевірка 3-х однакових символів (або з Wild як замінником)
-    # Створюємо комбінації, де Wild діє як будь-який інший символ
-    # Генеруємо всі можливі інтерпретації символів, де ⭐ є будь-яким символом з SYMBOLS
-    possible_effective_symbols = []
-    
-    # Simple case for 3 reels: iterate through all possible base symbols and see if they match
     for base_symbol in SYMBOLS:
         match_count = 0
         if s1 == base_symbol or s1 == WILD_SYMBOL:
@@ -351,19 +355,23 @@ def check_win_conditions(symbols):
             match_count += 1
         
         if match_count == 3:
-            # Found 3 matching, so return payout for that symbol
-            return PAYOUTS.get(tuple([base_symbol] * 3), 0)
+            winnings = PAYOUTS.get(tuple([base_symbol] * 3), 0)
+            logger.info(f"3-of-a-kind (or with Wild) for {base_symbol} detected! Winnings: {winnings}")
+            return winnings
     
     # 4. Перевірка 2-х однакових символів (або з Wild як замінником) на перших 2 позиціях
-    # Якщо ви хочете виплати за 2 символи, вони зазвичай мають бути на перших барабанах (ліворуч)
+    # Це виплати за 2 символи, якщо третій не завершує 3-в-ряд і не є скаттером.
     for base_symbol in SYMBOLS:
         if (s1 == base_symbol or s1 == WILD_SYMBOL) and \
            (s2 == base_symbol or s2 == WILD_SYMBOL):
-            # Перевіряємо, чи третій символ не є цим же символом (тоді це вже 3-в-ряд)
-            # і не є скаттером. Якщо він не заважає, це виграш 2-в-ряд.
-            if not (s3 == base_symbol or s3 == WILD_SYMBOL or s3 == SCATTER_SYMBOL):
-                 return PAYOUTS.get((base_symbol, base_symbol), 0) # Повертаємо виграш за 2 символи
+            # Перевіряємо, чи третій символ НЕ є цим же символом (тоді це вже 3-в-ряд)
+            # і НЕ є скаттером.
+            if not ((s3 == base_symbol or s3 == WILD_SYMBOL) or s3 == SCATTER_SYMBOL):
+                 winnings = PAYOUTS.get((base_symbol, base_symbol), 0)
+                 logger.info(f"2-of-a-kind (or with Wild) for {base_symbol} detected! Winnings: {winnings}")
+                 return winnings
     
+    logger.info(f"No winning combination found for symbols: {symbols}. Winnings: 0")
     return winnings # Повертаємо 0, якщо немає виграшних комбінацій
 
 def spin_slot(user_id):
@@ -371,6 +379,8 @@ def spin_slot(user_id):
     current_balance = user_data['balance']
     current_xp = user_data['xp']
     current_level = user_data['level']
+
+    logger.info(f"Spin requested for user {user_id}. Current balance: {current_balance}, XP: {current_xp}.")
 
     if current_balance < BET_AMOUNT:
         logger.info(f"User {user_id} tried to spin with insufficient balance: {current_balance}.")
@@ -383,9 +393,9 @@ def spin_slot(user_id):
     xp_gained = XP_PER_SPIN
     if winnings > 0:
         xp_gained += (XP_PER_SPIN * XP_PER_WIN_MULTIPLIER)
-        logger.info(f"User {user_id} won {winnings} with symbols {result_symbols}. Gained {xp_gained} XP.")
+        logger.info(f"User {user_id} won {winnings} with symbols {result_symbols}. Gained {xp_gained} XP. New balance would be {new_balance}.")
     else:
-        logger.info(f"User {user_id} lost on spin. Symbols: {result_symbols}. Gained {xp_gained} XP.")
+        logger.info(f"User {user_id} lost on spin. Symbols: {result_symbols}. Gained {xp_gained} XP. New balance would be {new_balance}.")
     
     new_xp = current_xp + xp_gained
     new_level = get_level_from_xp(new_xp)
@@ -415,6 +425,7 @@ def coin_flip_game(user_id, choice):
     current_xp = user_data['xp']
     current_level = user_data['level']
 
+    logger.info(f"Coin flip requested for user {user_id}. Choice: {choice}. Current balance: {current_balance}, XP: {current_xp}.")
 
     if current_balance < COIN_FLIP_BET_AMOUNT:
         logger.info(f"User {user_id} tried to coin flip with insufficient balance: {current_balance}.")
@@ -430,12 +441,13 @@ def coin_flip_game(user_id, choice):
     if choice == coin_result:
         winnings = COIN_FLIP_BET_AMOUNT * 2 # Подвоюємо ставку
         new_balance += winnings # Додаємо виграш
-        message = f"🎉 Вітаємо! Випало {result}! Ви виграли {winnings} фантиків!"
+        message = f"🎉 Вітаємо! Монета показала {coin_result == 'heads' and 'Орла' or 'Решку'}! Ви виграли {winnings} фантиків!"
         xp_gained += (XP_PER_COIN_FLIP * XP_PER_WIN_MULTIPLIER) # Додатковий XP за виграш
+        logger.info(f"User {user_id} won coin flip. Result: {coin_result}. Winnings: {winnings}. Gained {xp_gained} XP. New balance would be {new_balance}.")
     else:
-        message = f"😢 На жаль, випало {result}. Спробуйте ще раз!"
-        # xp_gained remains XP_PER_COIN_FLIP
-
+        message = f"😢 На жаль, монета показала {coin_result == 'heads' and 'Орла' or 'Решку'}. Спробуйте ще раз!"
+        logger.info(f"User {user_id} lost coin flip. Result: {coin_result}. Gained {xp_gained} XP. New balance would be {new_balance}.")
+    
     new_xp = current_xp + xp_gained
     new_level = get_level_from_xp(new_xp)
 
@@ -444,7 +456,7 @@ def coin_flip_game(user_id, choice):
     final_user_data = get_user_data(user_id) # Fetch updated data for consistency
 
     return {
-        'result': coin_result, # Changed from 'result' to 'coin_result' for clarity
+        'result': coin_result,
         'winnings': winnings,
         'balance': final_user_data['balance'],
         'message': message,
@@ -459,22 +471,25 @@ def coin_flip_game(user_id, choice):
 @dp.message(CommandStart())
 async def send_welcome(message: Message):
     user_id = message.from_user.id
-    # It's good to ensure DB is initialized on startup, but also on first user interaction
-    init_db() 
+    init_db() # Ensure DB is initialized on first user interaction
     
     user_data = get_user_data(user_id) # Get user data to ensure record exists
+    logger.info(f"CommandStart: User {user_id} fetched data: {user_data}")
     
     # Update username from Telegram data if available
     telegram_username = message.from_user.username
     telegram_first_name = message.from_user.first_name
     
-    if telegram_username:
-        if user_data['username'] != telegram_username:
-            update_user_data(user_id, username=telegram_username)
-            user_data['username'] = telegram_username # Update local dict
+    updated_username = user_data['username']
+    if telegram_username and user_data['username'] != telegram_username:
+        update_user_data(user_id, username=telegram_username)
+        updated_username = telegram_username
     elif telegram_first_name and user_data['username'] == 'Unnamed Player': # Only update if it's default
         update_user_data(user_id, username=telegram_first_name)
-        user_data['username'] = telegram_first_name # Update local dict
+        updated_username = telegram_first_name
+    
+    # Re-fetch user data to ensure we have the very latest values, including username change
+    user_data = get_user_data(user_id) 
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎰 Відкрити Слот-Казино 🎰", web_app=WebAppInfo(url=WEB_APP_URL))]
@@ -516,7 +531,7 @@ async def add_balance_command(message: Message):
     current_user_data = get_user_data(user_id)
     new_balance = current_user_data['balance'] + amount
     update_user_data(user_id, balance=new_balance)
-    updated_user_data = get_user_data(user_id)
+    updated_user_data = get_user_data(user_id) # Re-fetch to confirm update
 
     await message.reply(f"🎉 {amount} фантиків успішно додано! Ваш новий баланс: {updated_user_data['balance']} фантиків. 🎉")
     logger.info(f"Admin {user_id} added {amount} to their balance. New balance: {updated_user_data['balance']}.")
@@ -525,6 +540,13 @@ async def add_balance_command(message: Message):
 @dp.message(Command("get_coins"))
 async def get_free_coins_command(message: Message):
     user_id = message.from_user.id
+    
+    # Check for extra arguments (this command should not accept them)
+    if len(message.text.split()) > 1:
+        await message.reply("Ця команда не приймає аргументів. Використання: `/get_coins`")
+        logger.warning(f"User {user_id} used /get_coins with unexpected arguments: {message.text}")
+        return
+
     user_data = get_user_data(user_id)
     last_claim_time = user_data['last_free_coins_claim']
 
@@ -543,7 +565,7 @@ async def get_free_coins_command(message: Message):
     else:
         new_balance = user_data['balance'] + FREE_COINS_AMOUNT
         update_user_data(user_id, balance=new_balance, last_free_coins_claim=current_time)
-        updated_user_data = get_user_data(user_id)
+        updated_user_data = get_user_data(user_id) # Re-fetch to confirm update
         await message.reply(
             f"🎉 Вітаємо! Ви отримали {FREE_COINS_AMOUNT} безкоштовних фантиків!\n"
             f"Ваш новий баланс: {updated_user_data['balance']} фантиків. 🎉"
@@ -562,13 +584,16 @@ async def web_app_data_handler(message: Message):
     # For debugging, you can enable specific log types to be sent to chat
     if data_from_webapp.startswith('JS_VERY_FIRST_LOG:'):
         await message.answer(f"✅ WebApp Core Log: {data_from_webapp.replace('JS_VERY_FIRST_LOG:', '').strip()}")
+    elif data_from_webapp.startswith('JS_LOG:'):
+        # Only log to server console, don't spam user chat
+        logger.info(f"WebApp JS_LOG for {user_id}: {data_from_webapp.replace('JS_LOG:', '').strip()}")
+    elif data_from_webapp.startswith('JS_DEBUG:'):
+        # Only log to server console
+        logger.debug(f"WebApp JS_DEBUG for {user_id}: {data_from_webapp.replace('JS_DEBUG:', '').strip()}")
+    elif data_from_webapp.startswith('JS_WARN:'):
+        logger.warning(f"WebApp JS_WARN for {user_id}: {data_from_webapp.replace('JS_WARN:', '').strip()}")
     elif data_from_webapp.startswith('JS_ERROR:'):
         await message.answer(f"❌ WebApp Error: {data_from_webapp.replace('JS_ERROR:', '').strip()}")
-    # Removed JS_LOG and JS_DEBUG from sending to chat to avoid spamming user
-    # elif data_from_webapp.startswith('JS_LOG:'):
-    #     pass 
-    # elif data_from_webapp.startswith('JS_DEBUG:'):
-    #     pass 
     else:
         pass # For unknown data types or other unhandled messages
 
@@ -585,11 +610,18 @@ async def api_get_balance(request: Request):
         return json_response({'error': 'User ID is required'}, status=400)
     
     current_user_data = get_user_data(user_id)
+    logger.info(f"API: get_balance for user {user_id}. Current username in DB: {current_user_data['username']}, from frontend: {username}")
     
-    # Update username in DB if it changed or is still default
-    if username and current_user_data['username'] != username and username != 'Unnamed Player':
+    # Update username in DB if it changed or is still default and we have a better one
+    if username and current_user_data['username'] != username and current_user_data['username'] == 'Unnamed Player':
         update_user_data(user_id, username=username)
         current_user_data['username'] = username # Update local dict for response consistency
+        logger.info(f"API: Updated username for {user_id} to {username}")
+    elif username and current_user_data['username'] != username and username != 'Unnamed Player':
+        # If user changed username in Telegram, update it in DB
+        update_user_data(user_id, username=username)
+        current_user_data['username'] = username # Update local dict for response consistency
+        logger.info(f"API: Updated username for {user_id} to {username} (changed in Telegram)")
 
     return json_response({
         'balance': current_user_data['balance'],
@@ -721,7 +753,7 @@ async def api_get_leaderboard(request: Request):
             })
         return json_response({'leaderboard': leaderboard})
     except Exception as e:
-        logger.error(f"Error fetching leaderboard: {e}")
+        logger.error(f"Error fetching leaderboard: {e}", exc_info=True)
         return json_response({'error': 'Помилка при завантаженні дошки лідерів.'}, status=500)
     finally:
         if conn:
@@ -736,7 +768,7 @@ async def on_startup_webhook(web_app: Application):
     try:
         init_db() # Ensure DB is initialized on startup
     except Exception as e:
-        logger.critical(f"Failed to initialize database on startup: {e}")
+        logger.critical(f"Failed to initialize database on startup: {e}", exc_info=True)
         # Depending on severity, you might want to exit here or log more severely
     
     await bot.set_webhook(WEBHOOK_URL)

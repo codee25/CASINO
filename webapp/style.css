@@ -4,7 +4,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800;900&display=swap');
 
 /* Base Body Styles */
-html, body, #root {
+html, body {
     font-family: 'Inter', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -12,7 +12,7 @@ html, body, #root {
     height: 100%;
     margin: 0;
     padding: 0;
-    overflow: hidden; /* Prevent body scroll, the main container will manage overflow */
+    overflow: hidden; /* Prevent body scroll */
 }
 
 /* Root App Container - takes full screen, no outer frame/shadow */
@@ -20,7 +20,10 @@ html, body, #root {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: space-between; /* Adjusted for header/footer */
+    justify-content: space-between; 
+    width: 100%;
+    height: 100%;
+    overflow: hidden; /* Ensure #root itself does not scroll */
 }
 
 /* Header Bar at the top */
@@ -64,8 +67,8 @@ html, body, #root {
     opacity: 1; 
 }
 
-/* Leaderboard Button styling */
-.leaderboard-button {
+/* Leaderboard Button styling (if it were in header) */
+/* .leaderboard-button {
     box-shadow: 0 4px 8px rgba(0,0,0,0.3);
     width: 48px; 
     height: 48px; 
@@ -75,15 +78,49 @@ html, body, #root {
     justify-content: center;
     font-size: 1.5rem; 
     line-height: 1; 
-}
+} */
 
 /* Main Game Content Area - this is the flexible area that holds all game elements */
-/* This is a crucial change to ensure content is not hidden behind header/footer */
-.casino-app-container > div.relative.flex-grow { /* Target the main content area */
-    margin-top: 120px; /* Adjust this to match your header height + balance area */
-    margin-bottom: 80px; /* Adjust this to match your bottom nav height */
-    overflow-y: auto; /* Allow scrolling for content if needed */
+.casino-app-container {
     width: 100%;
+    height: 100%; /* Take full height of its parent (#root) */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    overflow: hidden; /* Hide scroll for the entire app container */
+}
+
+.casino-app-container > div.relative.flex-grow { /* Target the main content area */
+    /* Remove fixed margin-top and padding-bottom */
+    margin-top: 0; 
+    padding-bottom: 0;
+    /* Use flexbox to take available space and center content */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center; /* Center content vertically within the available space */
+    flex-grow: 1; /* Allow it to grow and shrink */
+    width: 100%;
+    /* Reintroduce padding for content */
+    padding: 1rem; /* Adjust as needed */
+    overflow-y: auto; /* Allow content inside this specific div to scroll if it overflows */
+    box-sizing: border-box; /* Include padding in element's total width and height */
+}
+
+/* Adjustments for sticky header/footer to ensure main content uses available space */
+@media (max-width: 768px) {
+    .casino-app-container > div.relative.flex-grow {
+        /* Ensure the content area accounts for header and footer */
+        height: calc(100vh - 160px); /* 100vh - header height - balance height - footer height */
+        max-height: calc(100vh - 160px); 
+    }
+}
+@media (min-width: 769px) {
+    .casino-app-container > div.relative.flex-grow {
+        height: calc(100vh - 160px); 
+        max-height: calc(100vh - 160px);
+    }
 }
 
 

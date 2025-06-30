@@ -148,7 +148,7 @@
                             ...prevUser,
                             userId: currentUserId,
                             username: currentUsername,
-                            balance: 1000, // Default balance for unauthenticated dummy users
+                            balance: 10000, // Default balance for unauthenticated dummy users
                             xp: 0,
                             level: 1,
                             nextLevelXp: 100
@@ -220,7 +220,7 @@
         function playLoseSoundEffect() { if (loseSound && Tone.context.state === 'running') loseSound.triggerAttackRelease("C3", "4n"); }
         function playLevelUpSound() { if (levelUpSound && Tone.context.state === 'running') levelUpSound.triggerAttackRelease(["E4", "G4", "C5"], "0.8n"); }
         function playDailyBonusSound() { if (dailyBonusSound && Tone.context.state === 'running') dailyBonusSound.triggerAttackRelease("G4", "0.5n"); }
-        function playQuickBonusSound() { if (quickBonusSound && Tone.context.state === 'running') quickBonusSound.triggerAttackRelease("A4", "0.2n"); }
+        function playQuickBonusSound() { if (quickBonusSound && Tone.context.state === 'running') coinFlipSound.triggerAttackRelease("C5", "0.1s"); } // Fixed to play coin flip sound
         function playCoinFlipSound() { if (coinFlipSound && Tone.context.state === 'running') coinFlipSound.triggerAttackRelease("C5", "0.1s"); }
 
 
@@ -270,11 +270,11 @@
         // -----------------------------------------------------------------------------
         // Slot Machine Game Component
         // -----------------------------------------------------------------------------
-        const SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '�', '🍀'];
+        const SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀'];
         const WILD_SYMBOL = '⭐';
         const SCATTER_SYMBOL = '💰';
         const ALL_REEL_SYMBOLS = [...SYMBOLS, WILD_SYMBOL, SCATTER_SYMBOL];
-        const REEL_HEIGHT_PX = 90;
+        const REEL_HEIGHT_PX = 90; // Default height for a symbol in a reel
         const REEL_SPIN_CYCLES = 5;
         const REEL_SPIN_DURATION_BASE = 0.8;
         const REEL_STOP_DURATION = 1.0;
@@ -471,7 +471,7 @@
 
                 setIsFlipping(true);
                 setMessage('');
-                setResultCoin('');
+                setResultCoin(''); // Clear previous result coin
                 setLastChoice(choice);
                 playCoinFlipSound();
                 sendTelegramLog(`Coin Flip: User chose ${choice}, starting flip.`);
@@ -486,11 +486,11 @@
                     const data = await response.json();
 
                     if (response.ok) {
-                        // Animate coin flip UI (simplified for now)
-                        await new Promise(resolve => setTimeout(resolve, 1500)); // Simulate flip time
+                        // Simulate flip animation time
+                        await new Promise(resolve => setTimeout(resolve, 1500)); 
 
-                        setResultCoin(data.result);
-                        setMessage(data.message);
+                        setResultCoin(data.result); // 'heads' or 'tails' from backend
+                        setMessage(data.message); // Win/lose message from backend
                         await fetchUserData(); // Update balance and XP from backend
                         sendTelegramLog(`Coin Flip Result: ${data.result}, Winnings: ${data.winnings}`);
                     } else {
@@ -514,11 +514,15 @@
 
                     <div className="coin-flip-area flex flex-col items-center mb-6">
                         <div className={`coin-display text-9xl transition-transform duration-500 ease-out ${isFlipping ? 'animate-spin-3d' : ''}`}>
-                            {resultCoin === 'heads' && '🪙'}
-                            {resultCoin === 'tails' && '💰'} {/* Використаємо '💰' для 'tails' тимчасово */}
-                            {!resultCoin && '❓'}
+                            {/* Display coin emoji based on resultCoin state */}
+                            {resultCoin === 'heads' ? '🪙' : resultCoin === 'tails' ? '🟡' : '❓'}
                         </div>
-                        {lastChoice && !isFlipping && <p className="text-gray-300 text-lg mt-2">Ваш вибір: {lastChoice === 'heads' ? 'Орел' : 'Решка'}</p>}
+                        {/* Show message from backend after flip */}
+                        {!isFlipping && message && <p className="text-gray-300 text-lg mt-2 text-center font-bold">{message}</p>}
+                        {/* Show user's choice while flipping or before result, if no message */}
+                        {isFlipping && lastChoice && <p className="text-gray-300 text-lg mt-2">Ваш вибір: {lastChoice === 'heads' ? 'Орел' : 'Решка'}</p>}
+                        {!isFlipping && !message && lastChoice && <p className="text-gray-300 text-lg mt-2">Ви обрали: {lastChoice === 'heads' ? 'Орел' : 'Решка'}</p>}
+
                     </div>
 
                     <div className="game-controls flex flex-col md:flex-row gap-3 mb-4 w-full max-w-xs md:max-w-sm">
@@ -536,10 +540,6 @@
                         >
                             Решка (Ставка: {COIN_FLIP_BET_AMOUNT})
                         </button>
-                    </div>
-                    
-                    <div className="message text-base md:text-lg font-semibold mt-4 min-h-[30px] flex items-center justify-center text-center w-full max-w-sm">
-                        {message}
                     </div>
                 </div>
             );
@@ -575,15 +575,7 @@
                     const data = await response.json();
                     sendTelegramLog(`Leaderboard data received, count: ${data.leaderboard ? data.leaderboard.length : 0}`);
                     
-                    // Sort by level descending, then by XP descending
-                    if (data.leaderboard && data.leaderboard.length > 0) {
-                        data.leaderboard.sort((a, b) => {
-                            if (b.level !== a.level) {
-                                return b.level - a.level;
-                            }
-                            return b.xp - a.xp;
-                        });
-                    }
+                    // Sorting is handled by backend query (ORDER BY level DESC, xp DESC)
                     setLeaderboardData(data.leaderboard || []);
 
                 } catch (err) {
@@ -616,7 +608,7 @@
                                         <th scope="col" className="py-2 px-3">Ім'я</th>
                                         <th scope="col" className="py-2 px-3 text-right">Рівень</th>
                                         <th scope="col" className="py-2 px-3 text-right">Баланс</th>
-                                        <th scope="col" class="py-2 px-3 text-right">XP</th>
+                                        {/* XP Column removed as requested */}
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -626,7 +618,7 @@
                                             <td className="py-2 px-3">{player.username}</td>
                                             <td className="py-2 px-3 text-right">{player.level}</td>
                                             <td className="py-2 px-3 text-right">{player.balance}</td>
-                                            <td class="py-2 px-3 text-right">{player.xp}</td>
+                                            {/* XP Data removed as requested */}
                                         </tr>
                                     ))}
                                 </tbody>
@@ -821,14 +813,7 @@
                         💰
                         <span id="quickBonusCooldown" className="quick-bonus-countdown">{quickBonusCooldownText}</span>
                     </button>
-                    {/* Leaderboard Button */}
-                    <button 
-                        id="leaderboardButton" 
-                        onClick={onShowLeaderboard}
-                        className="leaderboard-button absolute right-2 md:right-4 top-1/2 -translate-y-1/2 bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold w-12 h-12 rounded-full text-2xl flex items-center justify-center shadow-md transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95"
-                    >
-                        👑
-                    </button>
+                    {/* Leaderboard Button removed from here, now only in bottom nav */}
 
                     {/* Balance and Level Display */}
                     <div className="balance-area absolute top-16 left-1/2 transform -translate-x-1/2 bg-gray-800 rounded-b-xl py-2 px-4 shadow-inner border border-gray-700 border-t-0 w-full max-w-xs md:max-w-sm z-20">
@@ -865,7 +850,7 @@
         // -----------------------------------------------------------------------------
         function App() {
             const { isLoading, error, fetchUserData } = useUser();
-            const [currentPage, setCurrentPage] = useState('slots'); // 'slots', 'coin_flip', 'leaderboard'
+            const [currentPage, setCurrentPage] = useState('slots'); // 'slots', 'coin_flip', 'leaderboard', 'game3', 'game4', 'game5'
 
             const renderGame = () => {
                 if (isLoading) {
@@ -898,6 +883,12 @@
                         return <CoinFlip />;
                     case 'leaderboard':
                         return <Leaderboard />;
+                    case 'game3': // Placeholder for future game
+                        return <div className="flex-grow flex items-center justify-center text-4xl font-bold">Гра 3 (розробляється)</div>;
+                    case 'game4': // Placeholder for future game
+                        return <div className="flex-grow flex items-center justify-center text-4xl font-bold">Гра 4 (розробляється)</div>;
+                    case 'game5': // Placeholder for future game
+                        return <div className="flex-grow flex items-center justify-center text-4xl font-bold">Гра 5 (розробляється)</div>;
                     default:
                         return <SlotMachine />;
                 }
@@ -917,11 +908,12 @@
 
             return (
                 <div className="casino-app-container relative w-full h-full flex flex-col items-center justify-between bg-gradient-to-br from-purple-900 via-gray-900 to-indigo-900 text-white overflow-hidden">
-                    {/* Top Header with Balance, XP, Level, Bonuses, Leaderboard Button */}
-                    <TopHeader onShowLeaderboard={handleShowLeaderboard} />
+                    {/* Top Header with Balance, XP, Level, Bonuses */}
+                    <TopHeader />
 
                     {/* Main Game Content Area - renders current game */}
-                    <div className="relative flex-grow flex flex-col items-center justify-around w-full mt-[120px] pb-20"> {/* Adjusted margin-top to clear header and balance */}
+                    {/* Removed mt-[120px] and pb-20 - height handled by CSS flexbox */}
+                    <div className="relative flex-grow flex flex-col items-center justify-around w-full main-content-area"> 
                         {renderGame()}
                     </div>
 
@@ -945,7 +937,25 @@
                         >
                             👑
                         </button>
-                        {/* Add more game buttons here later */}
+                        {/* Placeholder buttons for 3 more games */}
+                        <button
+                            onClick={() => setCurrentPage('game3')}
+                            className={`nav-button p-2 rounded-full text-2xl transition-all duration-200 ${currentPage === 'game3' ? 'bg-yellow-500 text-gray-900 scale-110 shadow-lg' : 'text-gray-700 hover:text-gray-800'}`}
+                        >
+                            🎲
+                        </button>
+                        <button
+                            onClick={() => setCurrentPage('game4')}
+                            className={`nav-button p-2 rounded-full text-2xl transition-all duration-200 ${currentPage === 'game4' ? 'bg-yellow-500 text-gray-900 scale-110 shadow-lg' : 'text-gray-700 hover:text-gray-800'}`}
+                        >
+                            ♠️
+                        </button>
+                        <button
+                            onClick={() => setCurrentPage('game5')}
+                            className={`nav-button p-2 rounded-full text-2xl transition-all duration-200 ${currentPage === 'game5' ? 'bg-yellow-500 text-gray-900 scale-110 shadow-lg' : 'text-gray-700 hover:text-gray-800'}`}
+                        >
+                            🃏
+                        </button>
                     </div>
 
                     {/* Audio Context Activation Prompt */}
