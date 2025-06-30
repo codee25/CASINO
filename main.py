@@ -988,6 +988,7 @@ class BlackjackRoom:
         
         await self.send_room_state_to_all() # Оновити стан, щоб показати, що гравець зробив ставку
 
+        # Перевіряємо, чи всі активні гравці зробили ставки
         all_players_have_bet = all(p.has_bet for p in self.players.values())
         if all_players_have_bet and len(self.players) >= self.min_players:
             self.round_in_progress = True

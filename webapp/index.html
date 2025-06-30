@@ -1064,6 +1064,7 @@
                     {showBetModal && (
                         <div className="modal fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-70 active">
                             <div className="modal-content bg-gray-800 rounded-xl shadow-2xl p-6 md:p-8 text-center w-11/12 max-w-sm relative border-2 border-yellow-400">
+                                <button className="close-button absolute top-2 right-4 text-gray-400 hover:text-white text-3xl font-bold transition-colors duration-200" onClick={() => setShowBetModal(false)}>&times;</button>
                                 <h3 className="text-xl font-bold mb-4">Зробити Ставку</h3>
                                 <p className="mb-4">Ваша поточна ставка: {BLACKJACK_BET_AMOUNT} фантиків.</p>
                                 <button 
@@ -1448,7 +1449,7 @@
                     {/* Custom Modal for Alerts */}
                     <div id="customModal" className="modal fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-70 hidden">
                         <div className="modal-content bg-gray-800 rounded-xl shadow-2xl p-6 md:p-8 text-center w-11/12 max-w-sm relative border-2 border-yellow-400">
-                            <button className="close-button absolute top-2 right-4 text-gray-400 hover:text-white text-3xl font-bold transition-colors duration-200">&times;</button>
+                            <button className="close-button absolute top-2 right-4 text-gray-400 hover:text-white text-3xl font-bold transition-colors duration-200" onClick={() => setShowBetModal(false)}>&times;</button>
                             <p id="modalMessage" className="text-xl md:text-2xl font-semibold mb-4"></p>
                             <button className="bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold py-2 px-6 rounded-full text-lg shadow-md transition-all duration-300">OK</button>
                         </div>
