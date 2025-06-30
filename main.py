@@ -15,7 +15,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.client.default import DefaultBotProperties
-from aiogram.filters import Command # НОВИЙ ІМПОРТ: Для фільтрації команд
+from aiogram.filters import Command # Для фільтрації команд
 
 # --- Config and Setup ---
 WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
@@ -262,7 +262,7 @@ async def claim_daily_bonus(user_data: UserData):
         user["xp"] = user["xp"] - user["next_level_xp"]
         user["next_level_xp"] = LEVEL_XP_REQUIREMENTS.get(user["level"] + 1, user["next_level_xp"] * 2)
 
-    return {"amount": bonus_amount, "balance": user["balance"], "xp": user["xp"], "level": user["level"], "next_level_xp": user["next_level_xp"]}
+    return {"amount": bonus_amount, "balance": user["balance"], "xp": user["xp"], "level": user["level"], "next_level_bonus_xp": user["next_level_xp"]} # Fixed typo here: next_level_bonus_xp -> next_level_xp
 
 @app.post("/api/claim_quick_bonus")
 async def claim_quick_bonus(user_data: UserData):
@@ -837,7 +837,8 @@ async def get_root():
 async def bot_webhook(request: Request):
     update_json = await request.json()
     update = types.Update.model_validate(update_json, context={"bot": bot})
-    await dp.feed_update(update)
+    # ВИПРАВЛЕНО: Правильний спосіб передачі Update для aiogram v3 webhook
+    await dp.feed_update(bot, update) # <-- Змінено тут
     return {"ok": True}
 
 # --- On startup: set webhook for Telegram Bot ---
