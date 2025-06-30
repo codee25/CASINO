@@ -1,4 +1,4 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -6,38 +6,88 @@ import json
 import os
 import random
 import asyncio
+import uuid # For generating unique room IDs
 from datetime import datetime, timedelta
+from typing import Dict, List, Optional # Ensure these are imported for type hints
 
-app = FastAPI()
+# Aiogram imports
+from aiogram import Bot, Dispatcher, types
+from aiogram.enums import ParseMode
+from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.client.default import DefaultBotProperties
 
 # --- Config and Setup ---
-# In a real app, use environment variables for secrets and better configuration
-# For Render, we expect to be running in the /opt/render/project/src directory
 WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
-
-# Mount static files for your web app
+app = FastAPI()
 app.mount("/static", StaticFiles(directory=WEBAPP_DIR), name="static")
+
+# --- Environment Variables ---
+# IMPORTANT: You MUST set these environment variables in Render for your Web Service:
+# BOT_TOKEN = <YOUR_TELEGRAM_BOT_TOKEN> (Отримайте від BotFather)
+# WEB_APP_FRONTEND_URL = <YOUR_RENDER_STATIC_SITE_URL> (Наприклад, https://my-casino-app.onrender.com)
+# RENDER_EXTERNAL_HOSTNAME = <YOUR_RENDER_WEB_SERVICE_URL_WITHOUT_TRAILING_SLASH> (Наприклад, https://my-bot-backend.onrender.com)
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEB_APP_FRONTEND_URL = os.getenv("WEB_APP_FRONTEND_URL", "https://your-static-site-name.onrender.com") # Default for local testing
+WEBHOOK_PATH = "/webhook" # Path where Telegram will send updates
+
+# Initialize a global variable for WEBHOOK_URL. It will be set on startup.
+WEBHOOK_URL: Optional[str] = None
+
+# --- Aiogram Bot Setup ---
+if not BOT_TOKEN:
+    print("CRITICAL ERROR: BOT_TOKEN environment variable not set. Telegram bot will not work.")
+    # You might want to raise an exception or exit in a production environment
+    # For now, we'll proceed, but bot operations will fail.
+
+default_props = DefaultBotProperties(parse_mode=ParseMode.HTML)
+bot = Bot(token=BOT_TOKEN if BOT_TOKEN else "DUMMY_TOKEN", default=default_props) # Use dummy if not set, but bot won't work
+dp = Dispatcher(bot)
 
 # Mock database (in a real application, use a proper database like PostgreSQL, MongoDB, or Firestore)
 # Using a simple dictionary for demonstration purposes. This will reset on server restart.
-users_db = {} # user_id: {username, balance, xp, level, next_level_xp, last_daily_bonus_claim, last_quick_bonus_claim}
+users_db: Dict[str, dict] = {} # user_id: {username, balance, xp, level, next_level_xp, last_daily_bonus_claim, last_quick_bonus_claim}
 
 # Default XP progression
 LEVEL_XP_REQUIREMENTS = {
-    1: 0,
-    2: 100,
-    3: 300,
-    4: 600,
-    5: 1000,
-    6: 1500,
-    7: 2100,
-    8: 2800,
-    9: 3600,
-    10: 4500
+    1: 0, 2: 100, 3: 300, 4: 600, 5: 1000, 6: 1500, 7: 2100, 8: 2800, 9: 3600, 10: 4500
 }
 MAX_LEVEL = max(LEVEL_XP_REQUIREMENTS.keys())
 
-# --- User Management API Endpoints ---
+# --- Telegram Bot Handlers ---
+@dp.message(commands=['start'])
+async def start_command_handler(message: types.Message):
+    # Get user_id and username
+    user_id = str(message.from_user.id)
+    username = message.from_user.full_name or f"Гравець {user_id[-4:]}"
+
+    # Initialize user in DB if not exists (or fetch from real DB)
+    if user_id not in users_db:
+        users_db[user_id] = {
+            "username": username,
+            "balance": 10000, # Starting bonus
+            "xp": 0,
+            "level": 1,
+            "next_level_xp": LEVEL_XP_REQUIREMENTS.get(2, 100),
+            "last_daily_bonus_claim": None,
+            "last_quick_bonus_claim": None,
+        }
+        print(f"New user initialized on /start: {user_id} - {username}")
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="🚀 Запустити Імперію Слота",
+                web_app=WebAppInfo(url=WEB_APP_FRONTEND_URL)
+            )
+        ]
+    ])
+    await message.answer(
+        "Привіт! Ласкаво просимо до Імперії Слота! Натисніть кнопку нижче, щоб запустити Web App.",
+        reply_markup=keyboard
+    )
+
+# --- FastAPI API Endpoints ---
 class UserData(BaseModel):
     user_id: str
     username: str = "Unnamed Player"
@@ -53,7 +103,7 @@ class BlackjackAction(BaseModel):
     user_id: str
     room_id: str
     action: str # 'bet', 'hit', 'stand'
-    amount: int = None # For 'bet' action
+    amount: Optional[int] = None # For 'bet' action
 
 @app.post("/api/get_balance")
 async def get_balance(user_data: UserData):
@@ -61,7 +111,8 @@ async def get_balance(user_data: UserData):
     username = user_data.username
 
     if user_id not in users_db:
-        # Initialize new user with default values
+        # This block might be redundant if start_command_handler always initializes,
+        # but good for direct access or testing.
         users_db[user_id] = {
             "username": username,
             "balance": 10000, # Starting bonus
@@ -71,7 +122,7 @@ async def get_balance(user_data: UserData):
             "last_daily_bonus_claim": None,
             "last_quick_bonus_claim": None,
         }
-        print(f"New user initialized: {user_id} - {username}")
+        print(f"New user initialized via get_balance: {user_id} - {username}")
     else:
         # Update username if it changed (e.g., user set a Telegram username later)
         users_db[user_id]["username"] = username
@@ -102,7 +153,7 @@ async def spin_slot(spin_data: SpinData):
         raise HTTPException(status_code=400, detail="Not enough balance")
 
     user["balance"] -= bet_amount
-    symbols = [random.choice(['🍒', '🍋', '�', '🍇', '🔔', '💎', '🍀', '⭐', '💰']) for _ in range(3)]
+    symbols = [random.choice(['�', '🍋', '🍊', '🍇', '🔔', '💎', '🍀', '⭐', '💰']) for _ in range(3)]
 
     winnings = 0
     message = "Спробуйте ще раз!"
@@ -251,7 +302,7 @@ async def get_leaderboard():
         leaderboard_entries.append({
             "user_id": user_id,
             "username": data["username"],
-            "balance": data["balance"],
+            "balance": data["balance"], # Keep balance for sorting purposes
             "xp": data["xp"],
             "level": data["level"]
         })
@@ -266,14 +317,14 @@ async def get_leaderboard():
 # --- Blackjack Game Logic (Server-side) ---
 
 class Card:
-    def __init__(self, suit, rank):
+    def __init__(self, suit: str, rank: str):
         self.suit = suit
         self.rank = rank
 
     def __str__(self):
         return f"{self.rank}{self.suit}" # e.g., "K♠", "A♥"
 
-    def value(self):
+    def value(self) -> int:
         if self.rank in ['J', 'Q', 'K']:
             return 10
         elif self.rank == 'A':
@@ -285,10 +336,10 @@ class Deck:
     def __init__(self):
         suits = ['♠', '♥', '♦', '♣']
         ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A']
-        self.cards = [Card(suit, rank) for suit in suits for rank in ranks]
+        self.cards: List[Card] = [Card(suit, rank) for suit in suits for rank in ranks]
         random.shuffle(self.cards)
 
-    def deal_card(self):
+    def deal_card(self) -> Card:
         if not self.cards:
             self.__init__() # Reshuffle if deck is empty
             print("Reshuffling deck!")
@@ -296,11 +347,11 @@ class Deck:
 
 class Hand:
     def __init__(self):
-        self.cards = []
-        self.value = 0
-        self.aces = 0
+        self.cards: List[Card] = []
+        self.value: int = 0
+        self.aces: int = 0
 
-    def add_card(self, card):
+    def add_card(self, card: Card):
         self.cards.append(card)
         self.value += card.value()
         if card.rank == 'A':
@@ -314,9 +365,9 @@ class Hand:
     def __str__(self):
         return ", ".join(str(card) for card in self.cards)
     
-    def to_json(self, hide_first=False):
+    def to_json(self, hide_first: bool = False) -> List[str]:
         if hide_first and self.cards:
-            return [str(self.cards[0]), "Hidden"] + [str(card) for card in self.cards[1:]]
+            return ["Hidden", str(self.cards[1])] + [str(card) for card in self.cards[2:]] # Hide first card, show second as string
         return [str(card) for card in self.cards]
 
 
@@ -342,13 +393,14 @@ class BlackjackRoom:
     def __init__(self, room_id: str):
         self.room_id = room_id
         self.players: Dict[str, BlackjackPlayer] = {} # user_id: BlackjackPlayer
-        self.status = "waiting" # waiting, betting, playing, dealer_turn, round_end
+        self.status = "waiting" # waiting, starting_timer, betting, playing, dealer_turn, round_end
         self.deck = Deck()
         self.dealer_hand = Hand()
         self.current_turn_index = 0
         self.min_players = 2
         self.max_players = 5
-        self.game_start_timer: asyncio.Task = None # Stores the asyncio task for the timer
+        self.game_start_timer: Optional[asyncio.Task] = None # Stores the asyncio task for the timer
+        self.timer_countdown: int = 0 # Current countdown value
 
     async def add_player(self, user_id: str, username: str, websocket: WebSocket):
         if len(self.players) >= self.max_players:
@@ -374,6 +426,14 @@ class BlackjackRoom:
                 del blackjack_room_manager.rooms[self.room_id]
                 print(f"Room {self.room_id} is empty and removed.")
             else:
+                # If game was in progress and current player left, advance turn
+                if self.status == "playing" and not self.players[user_id].is_playing: # If current player left mid-turn
+                     active_players_after_removal = [p for p in self.players.values() if p.is_playing]
+                     if not active_players_after_removal: # All players done, go to dealer
+                         await self.next_turn()
+                     elif self.current_turn_index >= len(active_players_after_removal): # Index out of bounds, reset
+                         self.current_turn_index = 0
+                     
                 await self.send_room_state_to_all()
         else:
             print(f"Player {user_id} not found in room {self.room_id}")
@@ -383,13 +443,15 @@ class BlackjackRoom:
         for player in self.players.values():
             try:
                 # Customize state for each player (e.g., hide other player's hidden cards in poker, but not blackjack)
-                # For Blackjack, dealer's hidden card is the main thing to control
                 player_state = state.copy()
-                if self.status in ["betting", "waiting", "starting_timer"]:
-                     # Dealer's hand should be hidden before actual play
-                    player_state["dealer_hand"] = [str(self.dealer_hand.cards[0]), "Hidden"] if len(self.dealer_hand.cards) > 1 else self.dealer_hand.to_json()
-                    player_state["dealer_score"] = self.dealer_hand.cards[0].value() if len(self.dealer_hand.cards) > 1 else self.dealer_hand.value
-                
+                # If not dealer's turn and dealer has 2 cards, hide the second one for players
+                if self.status not in ["dealer_turn", "round_end"] and len(self.dealer_hand.cards) > 1:
+                    player_state["dealer_hand"] = [str(self.dealer_hand.cards[0]), "Hidden"]
+                    player_state["dealer_score"] = self.dealer_hand.cards[0].value() # Show only first card's value
+                else: # Reveal dealer's full hand and score
+                    player_state["dealer_hand"] = self.dealer_hand.to_json()
+                    player_state["dealer_score"] = self.dealer_hand.value
+
                 await player.websocket.send_json(player_state)
             except Exception as e:
                 print(f"Error sending state to {player.user_id}: {e}")
@@ -420,22 +482,23 @@ class BlackjackRoom:
         return {
             "room_id": self.room_id,
             "status": self.status,
-            "dealer_hand": self.dealer_hand.to_json(hide_first=(self.status in ["betting", "waiting", "starting_timer"] and len(self.dealer_hand.cards) > 1)),
-            "dealer_score": self.dealer_hand.cards[0].value() if (self.status in ["betting", "waiting", "starting_timer"] and len(self.dealer_hand.cards) > 1) else self.dealer_hand.value,
+            "dealer_hand": [], # Placeholder, will be filled in send_room_state_to_all based on visibility
+            "dealer_score": 0, # Placeholder
             "players": players_data,
             "current_player_turn": current_player_id,
             "player_count": len(self.players),
             "min_players": self.min_players,
             "max_players": self.max_players,
+            "timer": self.timer_countdown # Send current timer value
         }
 
     async def handle_bet(self, user_id: str, amount: int):
-        if self.status != "betting":
-            await self.players[user_id].websocket.send_json({"type": "error", "message": "Ставки приймаються лише на етапі 'betting'."})
-            return
-
         player = self.players.get(user_id)
         if not player:
+            return
+
+        if self.status != "betting":
+            await player.websocket.send_json({"type": "error", "message": "Ставки приймаються лише на етапі 'betting'."})
             return
 
         user_in_db = users_db.get(user_id)
@@ -445,37 +508,44 @@ class BlackjackRoom:
         if amount <= 0:
             await player.websocket.send_json({"type": "error", "message": "Ставка має бути позитивним числом."})
             return
+        if player.has_bet:
+            await player.websocket.send_json({"type": "error", "message": "Ви вже зробили ставку в цьому раунді."})
+            return
 
         player.bet = amount
-        user_in_db["balance"] -= amount
+        user_in_db["balance"] -= amount # Deduct bet from balance
         player.has_bet = True
         print(f"Player {user_id} bet {amount}")
 
-        # Check if all players have bet
+        # Check if all players have bet that are connected
         all_bet = all(p.has_bet for p in self.players.values())
         if all_bet and len(self.players) >= self.min_players:
             self.status = "playing"
             await self.start_round()
         else:
-            await self.send_room_state_to_all()
+            await self.send_room_state_to_all() # Update all clients to show who has bet
 
 
     async def handle_action(self, user_id: str, action: str):
         player = self.players.get(user_id)
-        if not player or player.user_id != self.get_current_player().user_id or not player.is_playing:
+        if not player or not player.is_playing:
             await player.websocket.send_json({"type": "error", "message": "Зараз не ваш хід або ви не граєте."})
             return
+        
+        current_player = self.get_current_player()
+        if not current_player or player.user_id != current_player.user_id:
+             await player.websocket.send_json({"type": "error", "message": "Зараз хід іншого гравця."})
+             return
 
         if action == "hit":
             player.hand.add_card(self.deck.deal_card())
+            await self.send_room_state_to_all() # Send update after card is added
             if player.hand.value > 21:
                 player.is_playing = False # Busted
-                await self.send_room_state_to_all()
                 await player.websocket.send_json({"type": "game_message", "message": "Ви перебрали! 💥"})
                 await asyncio.sleep(1) # Small delay for message to be seen
                 await self.next_turn()
-            else:
-                await self.send_room_state_to_all() # Update all players with new card
+            # If not busted, player can still hit, so don't advance turn yet
         elif action == "stand":
             player.is_playing = False
             await player.websocket.send_json({"type": "game_message", "message": "Ви зупинились."})
@@ -484,17 +554,18 @@ class BlackjackRoom:
         else:
             await player.websocket.send_json({"type": "error", "message": "Невідома дія."})
 
-    def get_current_player(self):
+    def get_current_player(self) -> Optional[BlackjackPlayer]:
         active_players = [p for p in self.players.values() if p.is_playing]
         if not active_players:
             return None
+        # Ensure current_turn_index wraps around
         return active_players[self.current_turn_index % len(active_players)]
 
     async def next_turn(self):
         self.current_turn_index += 1
         active_players = [p for p in self.players.values() if p.is_playing]
 
-        if not active_players: # All players finished, dealer's turn
+        if not active_players: # All players finished their turns (stood or busted), dealer's turn
             self.status = "dealer_turn"
             await self.send_room_state_to_all() # Show dealer's second card
             await asyncio.sleep(1) # Pause before dealer plays
@@ -506,8 +577,11 @@ class BlackjackRoom:
         print(f"Room {self.room_id}: Starting new round.")
         self.deck = Deck() # New shuffled deck for each round
         self.dealer_hand = Hand()
+        self.current_turn_index = 0 # Reset turn index for new round
+        
+        # Reset players and deal initial cards
         for player in self.players.values():
-            player.reset_for_round()
+            player.reset_for_round() # Reset player state from previous round
             player.hand.add_card(self.deck.deal_card()) # First card
             player.hand.add_card(self.deck.deal_card()) # Second card
         
@@ -515,23 +589,25 @@ class BlackjackRoom:
         self.dealer_hand.add_card(self.deck.deal_card()) # Dealer's second card (hidden initially)
 
         self.status = "playing"
-        self.current_turn_index = 0 # Reset turn index for new round
         await self.send_room_state_to_all() # Send initial hands
 
-        # Check for immediate Blackjack
+        # Check for immediate Blackjacks and process players who get it
         for player in self.players.values():
             if player.hand.value == 21 and len(player.hand.cards) == 2:
-                player.is_playing = False
-                await player.websocket.send_json({"type": "game_message", "message": "Блекджек! 🎉"})
-                await asyncio.sleep(1)
-        
+                player.is_playing = False # Player has Blackjack, no more turns
+                await player.websocket.send_json({"type": "game_message", "message": "У вас Блекджек! 🎉"})
+                await asyncio.sleep(1) # Small delay for message to be seen
+
         # If any players are still active, start their turns
-        active_players = [p for p in self.players.values() if p.is_playing]
-        if not active_players:
+        active_players_after_blackjack_check = [p for p in self.players.values() if p.is_playing]
+        if not active_players_after_blackjack_check:
             # Everyone got blackjack or busted already, proceed to dealer
             await self.next_turn() 
         else:
-             await self.send_room_state_to_all() # Ensure current_player_turn is set correctly
+            # Ensure the current_turn_index points to the first active player
+            # It's already 0, but if first players had blackjack, get_current_player() will skip them.
+            await self.send_room_state_to_all() 
+
 
     async def dealer_play(self):
         print(f"Room {self.room_id}: Dealer's turn.")
@@ -606,11 +682,12 @@ class BlackjackRoom:
             player.reset_for_round() # Reset player for next round
 
         # After all players are processed, set status back to waiting for next round
-        self.status = "waiting" # Or "betting" to immediately start betting
+        # Or transition to betting phase if we want to immediately start next round
+        self.status = "waiting" # Go back to waiting for next game start
         self.dealer_hand = Hand() # Clear dealer hand
         await self.send_room_state_to_all() # Send reset state
         await asyncio.sleep(2) # Pause before moving to betting phase
-        self.status = "betting"
+        self.status = "betting" # Immediately allow betting for next round
         await self.send_room_state_to_all() # Tell clients to open betting UI
 
 
@@ -628,12 +705,13 @@ class BlackjackRoomManager:
                     # If minimum players reached, start timer
                     if len(room.players) >= room.min_players and room.status == "waiting":
                         room.status = "starting_timer"
-                        await room.send_room_state_to_all() # Update UI with timer status
                         # Cancel existing timer if any, and start a new one
                         if room.game_start_timer and not room.game_start_timer.done():
                             room.game_start_timer.cancel()
+                        room.timer_countdown = 20 # Set initial timer value for client
                         room.game_start_timer = asyncio.create_task(self._start_game_after_delay(room_id, 20))
                         print(f"Room {room_id}: Game start timer initiated for 20 seconds.")
+                    await room.send_room_state_to_all() # Send initial state on join/create
                     return room_id
         
         # No suitable room found, create a new one
@@ -653,37 +731,33 @@ class BlackjackRoomManager:
             return
 
         for i in range(delay, 0, -1):
+            room.timer_countdown = i # Update timer countdown in room state
             if room.status != "starting_timer" or len(room.players) < room.min_players:
                 print(f"Room {room_id} timer cancelled/interrupted.")
                 # If player count drops below minimum, reset status
                 if len(room.players) < room.min_players:
                     room.status = "waiting"
+                room.timer_countdown = 0 # Reset timer on cancel
                 await room.send_room_state_to_all() # Inform clients about status change
                 return
             await room.send_room_state_to_all() # Send state to update timer countdown on clients
             await asyncio.sleep(1)
         
         if room.status == "starting_timer" and len(room.players) >= room.min_players:
-            print(f"Room {room_id}: Timer finished, starting game.")
+            print(f"Room {room_id}: Timer finished, moving to betting phase.")
             room.status = "betting" # Transition to betting phase
+            room.timer_countdown = 0 # Reset timer
             await room.send_room_state_to_all()
-            # No need to call start_round here, betting phase starts, then betting leads to start_round
 
 
 blackjack_room_manager = BlackjackRoomManager()
 
 
 # --- WebSocket Endpoint ---
-
-class WebSocketMessage(BaseModel):
-    action: str
-    amount: int = None # For 'bet'
-    # Other fields as needed for game actions
-
+# This endpoint handles real-time game interactions for Blackjack.
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
-    # Retrieve user's username (e.g., from users_db or initDataUnsafe if available)
-    # For now, let's assume it's passed or defaults. In a real app, you'd verify auth.
+    # Retrieve user's username. This should be consistent with how users are handled elsewhere.
     username = users_db.get(user_id, {}).get("username", f"Гравець {user_id[-4:]}")
     
     room_id = await blackjack_room_manager.create_or_join_room(user_id, username, websocket)
@@ -692,11 +766,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         return
 
     try:
-        # Send initial state to the newly connected player
-        room = blackjack_room_manager.rooms.get(room_id)
-        if room:
-            await room.send_room_state_to_all() # Broadcast to all after a new player joins/creates
-
+        # Initial state is already sent by create_or_join_room
         while True:
             data = await websocket.receive_text()
             try:
@@ -716,18 +786,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                         await websocket.send_json({"type": "error", "message": "Сума ставки не вказана."})
                 elif action in ["hit", "stand"]:
                     await room.handle_action(user_id, action)
-                elif action == "ready":
-                    player = room.players.get(user_id)
-                    if player:
-                        player.is_ready = True
-                        await room.send_room_state_to_all()
-                        # If all players are ready and min players, start betting phase
-                        if all(p.is_ready for p in room.players.values()) and len(room.players) >= room.min_players and room.status == "waiting":
-                             if room.game_start_timer and not room.game_start_timer.done(): # Cancel existing if any
-                                 room.game_start_timer.cancel()
-                             room.status = "starting_timer"
-                             room.game_start_timer = asyncio.create_task(blackjack_room_manager._start_game_after_delay(room.room_id, 20))
-                             await room.send_room_state_to_all() # Update UI to show timer
                 elif action == "request_state": # For new players to get current state
                     await room.send_room_state_to_all() # Will send to all including requester
                 else:
@@ -754,6 +812,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         # Consider more robust error handling / logging
         
 # --- Serve the main HTML file ---
+# This serves your React frontend (index.html)
 @app.get("/")
 async def get_root():
     # Read index.html content
@@ -765,3 +824,54 @@ async def get_root():
         html_content = f.read()
     
     return HTMLResponse(content=html_content)
+
+# --- Telegram Webhook Endpoint ---
+# This endpoint receives updates from Telegram and passes them to aiogram dispatcher.
+@app.post(WEBHOOK_PATH)
+async def bot_webhook(request: Request):
+    update_json = await request.json()
+    update = types.Update.model_validate(update_json, context={"bot": bot})
+    await dp.feed_update(update)
+    return {"ok": True}
+
+# --- On startup: set webhook for Telegram Bot ---
+# This function runs when your FastAPI application starts.
+# It sets the Telegram webhook URL so Telegram knows where to send updates.
+@app.on_event("startup")
+async def on_startup():
+    # Render automatically sets RENDER_EXTERNAL_HOSTNAME to your service's external URL.
+    # We use this to construct the webhook URL.
+    external_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+    if not external_hostname:
+        print("WARN: RENDER_EXTERNAL_HOSTNAME environment variable not set. Assuming localhost for webhook setup.")
+        external_hostname = "http://localhost:8000" # Fallback for local testing
+
+    global WEBHOOK_URL
+    WEBHOOK_URL = f"{external_hostname}{WEBHOOK_PATH}"
+
+    # Set webhook
+    try:
+        webhook_info = await bot.get_webhook_info()
+        if webhook_info.url != WEBHOOK_URL:
+            await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True) # drop_pending_updates=True clears old updates
+            print(f"Telegram webhook set to: {WEBHOOK_URL}")
+        else:
+            print(f"Telegram webhook already set to: {WEBHOOK_URL}")
+    except Exception as e:
+        print(f"ERROR: Failed to set Telegram webhook: {e}")
+        if BOT_TOKEN == "DUMMY_TOKEN":
+            print("Hint: Is BOT_TOKEN correctly set as an environment variable?")
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    # Delete webhook and close bot session when the app shuts down.
+    try:
+        await bot.delete_webhook()
+        print("Telegram webhook deleted.")
+    except Exception as e:
+        print(f"ERROR: Failed to delete Telegram webhook on shutdown: {e}")
+    finally:
+        await dp.storage.close() # Close dispatcher storage if used
+        await bot.session.close() # Close aiohttp session
+        print("Bot session closed.")
+
