@@ -1,4 +1,7 @@
-import React, { useState, useEffect, createContext, useContext, useCallback } from 'react';
+// Use window.React for unpkg.com global React
+const React = window.React;
+const { useState, useEffect, createContext, useContext, useCallback, useRef } = window.React; // Import useRef here
+
 import * as Tone from 'tone'; // Import Tone.js
 
 // -----------------------------------------------------------------------------
@@ -6,7 +9,8 @@ import * as Tone from 'tone'; // Import Tone.js
 // -----------------------------------------------------------------------------
 const UserContext = createContext(null);
 
-export const UserProvider = ({ children }) => {
+// Make UserProvider globally accessible
+window.UserProvider = ({ children }) => {
     const [user, setUser] = useState({
         userId: null,
         username: 'Unnamed Player',
@@ -21,7 +25,7 @@ export const UserProvider = ({ children }) => {
     const [error, setError] = useState(null);
 
     // Backend API URL (ВАШ АКТУАЛЬНИЙ URL!)
-    const API_BASE_URL = 'https://casino-0h0l.onrender.com';
+    const API_BASE_URL = 'https://casino-0h0l.onrender.com'; // ЗМІНІТЬ ЦЕЙ URL!
 
     // Helper to send logs to Telegram bot for debugging
     const sendTelegramLog = useCallback((message, type = 'JS_LOG') => {
@@ -235,7 +239,6 @@ const BET_AMOUNT = 100; // Ставка для слотів
 
 const SlotMachine = () => {
     const { user, fetchUserData, API_BASE_URL, sendTelegramLog } = useUser();
-    const [reelSymbols, setReelSymbols] = useState(['?', '?', '?']);
     const [message, setMessage] = useState('');
     const [messageClass, setMessageClass] = useState('');
     const [isSpinning, setIsSpinning] = useState(false);
@@ -300,7 +303,7 @@ const SlotMachine = () => {
 
         setIsSpinning(true);
         setMessage('');
-        setReelSymbols(['?', '?', '?']); // Reset symbols visually
+        // setReelSymbols(['?', '?', '?']); // No longer needed here as animateReels clears it
         sendTelegramLog('Spin button clicked, starting spin process.');
 
         try {
@@ -608,15 +611,18 @@ const TopHeader = ({ onShowLeaderboard }) => {
         const now = new Date();
         const cooldownDuration = 24 * 60 * 60 * 1000; // 24 hours in ms
         
+        const dailyBonusButtonElement = document.getElementById('dailyBonusButton'); // Access via DOM
+        if (!dailyBonusButtonElement) return;
+
         if (!user.lastDailyBonusClaim || (now.getTime() - user.lastDailyBonusClaim.getTime()) >= cooldownDuration) {
             setDailyBonusCooldownText('');
-            document.getElementById('dailyBonusButton').disabled = false;
-            document.getElementById('dailyBonusButton').classList.add('pulsing');
+            dailyBonusButtonElement.disabled = false;
+            dailyBonusButtonElement.classList.add('pulsing');
         } else {
             const timeLeft = cooldownDuration - (now.getTime() - user.lastDailyBonusClaim.getTime());
             setDailyBonusCooldownText(`(${formatTime(timeLeft)})`);
-            document.getElementById('dailyBonusButton').disabled = true;
-            document.getElementById('dailyBonusButton').classList.remove('pulsing');
+            dailyBonusButtonElement.disabled = true;
+            dailyBonusButtonElement.classList.remove('pulsing');
         }
     }, [user.lastDailyBonusClaim]);
 
@@ -631,10 +637,13 @@ const TopHeader = ({ onShowLeaderboard }) => {
             showCustomModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб отримати User ID.', "Недоступно");
             return;
         }
-        if (document.getElementById('dailyBonusButton').disabled) return;
+        const dailyBonusButtonElement = document.getElementById('dailyBonusButton');
+        if (dailyBonusButtonElement && dailyBonusButtonElement.disabled) return;
 
-        document.getElementById('dailyBonusButton').disabled = true;
-        document.getElementById('dailyBonusButton').classList.remove('pulsing');
+        if(dailyBonusButtonElement) {
+            dailyBonusButtonElement.disabled = true;
+            dailyBonusButtonElement.classList.remove('pulsing');
+        }
         sendTelegramLog('Attempting to claim daily bonus...');
 
         try {
@@ -659,8 +668,10 @@ const TopHeader = ({ onShowLeaderboard }) => {
         } catch (error) {
             console.error('Помилка при отриманні щоденної винагороди:', error);
             showCustomModal('🚫 Не вдалося зʼєднатись із сервером для винагороди.', "Помилка");
-            document.getElementById('dailyBonusButton').disabled = false;
-            document.getElementById('dailyBonusButton').classList.add('pulsing');
+            if(dailyBonusButtonElement) {
+                dailyBonusButtonElement.disabled = false;
+                dailyBonusButtonElement.classList.add('pulsing');
+            }
             sendTelegramLog(`Daily Bonus network error: ${error.message}`, 'JS_ERROR');
         }
     };
@@ -672,22 +683,20 @@ const TopHeader = ({ onShowLeaderboard }) => {
         
         const quickBonusButtonElement = document.getElementById('quickBonusButton');
         const quickBonusCooldownElement = document.getElementById('quickBonusCooldown');
+        if (!quickBonusButtonElement || !quickBonusCooldownElement) return;
+
 
         if (!user.lastQuickBonusClaim || (now.getTime() - user.lastQuickBonusClaim.getTime()) >= cooldownDuration) {
             setQuickBonusCooldownText('');
-            if (quickBonusButtonElement) {
-                quickBonusButtonElement.disabled = false;
-                quickBonusButtonElement.classList.add('pulsing');
-                quickBonusButtonElement.classList.remove('active-countdown'); // Hide timer
-            }
+            quickBonusButtonElement.disabled = false;
+            quickBonusButtonElement.classList.add('pulsing');
+            quickBonusButtonElement.classList.remove('active-countdown'); // Hide timer
         } else {
             const timeLeft = cooldownDuration - (now.getTime() - user.lastQuickBonusClaim.getTime());
             setQuickBonusCooldownText(formatTime(timeLeft));
-            if (quickBonusButtonElement) {
-                quickBonusButtonElement.disabled = true;
-                quickBonusButtonElement.classList.remove('pulsing');
-                quickBonusButtonElement.classList.add('active-countdown'); // Show timer
-            }
+            quickBonusButtonElement.disabled = true;
+            quickBonusButtonElement.classList.remove('pulsing');
+            quickBonusButtonElement.classList.add('active-countdown'); // Show timer
         }
     }, [user.lastQuickBonusClaim]);
 
@@ -702,12 +711,15 @@ const TopHeader = ({ onShowLeaderboard }) => {
             showCustomModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб отримати User ID.', "Недоступно");
             return;
         }
-        if (document.getElementById('quickBonusButton').disabled) return;
+        const quickBonusButtonElement = document.getElementById('quickBonusButton');
+        if (quickBonusButtonElement && quickBonusButtonElement.disabled) return;
 
-        document.getElementById('quickBonusButton').disabled = true;
-        document.getElementById('quickBonusButton').classList.remove('pulsing');
-        document.getElementById('quickBonusButton').classList.remove('active-countdown');
-        setQuickBonusCooldownText('');
+        if(quickBonusButtonElement) {
+            quickBonusButtonElement.disabled = true;
+            quickBonusButtonElement.classList.remove('pulsing');
+            quickBonusButtonElement.classList.remove('active-countdown');
+            setQuickBonusCooldownText('');
+        }
         sendTelegramLog('Attempting to claim quick bonus...');
 
         try {
@@ -732,8 +744,10 @@ const TopHeader = ({ onShowLeaderboard }) => {
         } catch (error) {
             console.error('Помилка при отриманні швидкого бонусу:', error);
             showCustomModal('🚫 Не вдалося зʼєднатись із сервером для швидкого бонусу.', "Помилка");
-            document.getElementById('quickBonusButton').disabled = false;
-            document.getElementById('quickBonusButton').classList.add('pulsing');
+            if(quickBonusButtonElement) {
+                quickBonusButtonElement.disabled = false;
+                quickBonusButtonElement.classList.add('pulsing');
+            }
             sendTelegramLog(`Quick Bonus network error: ${error.message}`, 'JS_ERROR');
         }
     };
@@ -763,21 +777,30 @@ const TopHeader = ({ onShowLeaderboard }) => {
             </button>
 
             {/* Balance and Level Display */}
+            {/* Changed from id to className for React state updates. */}
             <div className="balance-area absolute top-16 left-1/2 transform -translate-x-1/2 bg-gray-800 rounded-b-xl py-2 px-4 shadow-inner border border-gray-700 border-t-0 w-full max-w-xs md:max-w-sm z-20">
                 <div className="flex justify-between items-center w-full mb-1">
                     <span className="text-base md:text-lg text-gray-300 font-medium">Баланс:</span>
-                    <span id="userBalance" className={`font-bold text-yellow-300 text-2xl md:text-3xl ${user.balance !== 0 ? 'animate-pulse-balance' : ''}`}>{user.balance}</span>
+                    <span className={`font-bold text-yellow-300 text-2xl md:text-3xl ${user.balance !== 0 ? 'animate-pulse-balance' : ''}`}>{user.balance}</span>
                     <span className="text-base md:text-lg text-gray-300 font-medium ml-2">фантиків</span>
                 </div>
                 <div className="level-progress w-full mt-1">
                     <div className="flex justify-between items-center text-xs text-gray-400 mb-0.5">
-                        <span>Рівень: <span id="userLevel" className="font-bold text-white">{user.level}</span></span>
-                        <span>XP: <span id="userXp" className="font-bold text-white">{user.xp}</span>/<span id="nextLevelXp" className="font-bold text-white">{user.nextLevelXp}</span></span>
+                        <span>Рівень: <span className="font-bold text-white">{user.level}</span></span>
+                        <span>XP: <span className="font-bold text-white">{user.xp}</span>/<span className="font-bold text-white">{user.nextLevelXp}</span></span>
                     </div>
                     <div className="xp-bar w-full bg-gray-600 rounded-full h-2">
-                        <div id="xpProgressBar" className="h-full bg-blue-500 rounded-full transition-all duration-300 ease-out" style={{ width: `${xpProgress}%` }}></div>
+                        <div className="h-full bg-blue-500 rounded-full transition-all duration-300 ease-out" style={{ width: `${xpProgress}%` }}></div>
                     </div>
                 </div>
+                {/* Daily Bonus Button - moved here for visual grouping */}
+                <button 
+                    id="dailyBonusButton" 
+                    onClick={handleClaimDailyBonus}
+                    className="daily-bonus-button bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-bold py-2 px-4 rounded-full text-sm shadow-lg transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex items-center justify-center whitespace-nowrap mt-2 w-full"
+                >
+                    Щоденна Винагорода <span id="dailyBonusCooldown" className="ml-2 text-xs text-blue-200">{dailyBonusCooldownText}</span>
+                </button>
             </div>
         </div>
     );
@@ -787,9 +810,10 @@ const TopHeader = ({ onShowLeaderboard }) => {
 // -----------------------------------------------------------------------------
 // Main App Component
 // -----------------------------------------------------------------------------
-import { useRef } from 'react'; // Ensure useRef is imported
+// No longer need to import useRef here as it's extracted from window.React at the top
 
-export default function App() {
+// Make App globally accessible
+window.App = function App() {
     const { isLoading, error, fetchUserData } = useUser();
     const [currentPage, setCurrentPage] = useState('slots'); // 'slots', 'coin_flip', 'leaderboard'
 
@@ -839,7 +863,7 @@ export default function App() {
             <TopHeader onShowLeaderboard={handleShowLeaderboard} />
 
             {/* Main Game Content Area - renders current game */}
-            <div className="relative flex-grow flex flex-col items-center justify-around w-full mt-[80px] pb-20"> {/* Adjusted margin-top to clear header */}
+            <div className="relative flex-grow flex flex-col items-center justify-around w-full mt-[120px] pb-20"> {/* Adjusted margin-top to clear header and balance */}
                 {renderGame()}
             </div>
 
@@ -856,6 +880,12 @@ export default function App() {
                     className={`nav-button p-2 rounded-full text-2xl transition-all duration-200 ${currentPage === 'coin_flip' ? 'bg-yellow-500 text-gray-900 scale-110 shadow-lg' : 'text-gray-700 hover:text-gray-800'}`}
                 >
                     🪙
+                </button>
+                <button
+                    onClick={() => setCurrentPage('leaderboard')}
+                    className={`nav-button p-2 rounded-full text-2xl transition-all duration-200 ${currentPage === 'leaderboard' ? 'bg-yellow-500 text-gray-900 scale-110 shadow-lg' : 'text-gray-700 hover:text-gray-800'}`}
+                >
+                    👑
                 </button>
                 {/* Add more game buttons here later */}
             </div>
