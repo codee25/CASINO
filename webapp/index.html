@@ -72,8 +72,8 @@
             const [blackjackRoomState, setBlackjackRoomState] = useState({
                 room_id: null,
                 status: "disconnected", // Default to disconnected
-                dealer_hand: [],
-                dealer_score: 0,
+                dealer_hand: [], // This will now always be empty or null
+                dealer_score: 0, // This will now always be 0
                 players: [],
                 current_player_turn: null,
                 player_count: 0,
@@ -285,7 +285,7 @@
                                 const { message: resultMsg, winnings, balance, xp, level, next_level_xp, final_player_score, final_dealer_score } = message;
                                 setBlackjackGameMessage(resultMsg);
                                 showCustomModal(
-                                    `Результат: ${resultMsg}<br/>Ваш рахунок: ${final_player_score}<br/>Рахунок дилера: ${final_dealer_score}<br/>Виграш: ${winnings} фантиків!`,
+                                    `Результат: ${resultMsg}<br/>Ваш рахунок: ${final_player_score}<br/>Виграш: ${winnings} фантиків!`,
                                     "Результат Раунду"
                                 );
                                 if (winnings > 0) {
@@ -380,7 +380,6 @@
                             const activePlayer = state.players.find(p => p.user_id === state.current_player_turn);
                             return `Хід гравця: ${activePlayer ? activePlayer.username : 'Невідомий'}`;
                         }
-                    case "dealer_turn": return "Хід дилера...";
                     case "round_end": return "Раунд завершено. Результати...";
                     case "disconnected": return "Ви відключені від гри. Спробуйте оновити.";
                     case "error": return "Помилка гри. Спробуйте оновити.";
@@ -992,22 +991,21 @@
                         </div>
                     )}
 
-                    {/* Dealer's Hand */}
-                    <div className="dealer-area bg-gray-800 p-4 rounded-xl shadow-lg w-full max-w-lg mb-4 text-center border-2 border-green-700">
-                        {/* Прибрано статичний напис "Дилер:" - тепер заголовок динамічний */}
+                    {/* Removed Dealer's Hand area completely */}
+                    {/* <div className="dealer-area bg-gray-800 p-4 rounded-xl shadow-lg w-full max-w-lg mb-4 text-center border-2 border-green-700">
                         <h2 className="text-2xl font-bold text-orange-400 mb-2">
                             {blackjackRoomState.dealer_hand.length > 0 ? 
                                 `Дилер: ${blackjackRoomState.status === "playing" || blackjackRoomState.status === "dealer_turn" || blackjackRoomState.status === "round_end" 
                                     ? blackjackRoomState.dealer_score 
                                     : 'Приховано'}`
-                                : 'Дилер'} {/* Якщо карт немає, просто "Дилер" */}
+                                : 'Дилер'}
                         </h2>
                         <div className="flex justify-center gap-2 flex-wrap">
                             {blackjackRoomState.dealer_hand.map((cardStr, idx) => (
                                 <div key={idx} className="card-item">{getCardDisplay(cardStr)}</div>
                             ))}
                         </div>
-                    </div>
+                    </div> */}
 
                     {/* Players' Hands */}
                     <div className="players-area flex-grow w-full max-w-lg overflow-y-auto p-2 bg-gray-900 rounded-xl shadow-inner border border-gray-700">
