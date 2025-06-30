@@ -22,7 +22,6 @@ from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import CommandStart, Command # For aiogram v3 filters
 from aiogram.client.default import DefaultBotProperties # For bot default settings
 
-# NEW IMPORT: For CORS middleware
 from fastapi.middleware.cors import CORSMiddleware
 
 # --- Logging Configuration ---
@@ -30,44 +29,32 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # --- Environment Variables ---
-# IMPORTANT: Set these environment variables on Render.com for your Web Service
-API_TOKEN = os.getenv('BOT_TOKEN') # Telegram Bot Token
-WEB_APP_FRONTEND_URL = os.getenv('WEB_APP_FRONTEND_URL') # URL of your Render Static Site
-# RENDER_EXTERNAL_HOSTNAME is automatically set by Render.com. It's the URL of your FastAPI backend.
+API_TOKEN = os.getenv('BOT_TOKEN') 
+WEB_APP_FRONTEND_URL = os.getenv('WEB_APP_FRONTEND_URL') 
 WEBHOOK_HOST = os.getenv('RENDER_EXTERNAL_HOSTNAME') 
 
-# Path to the frontend (webapp) folder
 WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
 
 # --- FastAPI App Setup ---
 app = FastAPI()
 
-# ADDED: CORS Configuration
-# Temporarily allowing all origins to ensure CORS is not the issue during debugging.
-# In production, it's safer to specify exact frontend URLs.
 origins = [
     "*", 
-    # Uncomment and use specific URLs in production:
-    # WEB_APP_FRONTEND_URL, 
-    # f"https://{WEBHOOK_HOST}", 
-    # "http://localhost",
-    # "http://localhost:3000",
-    # "http://localhost:5173",
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"], # Allow all HTTP methods (GET, POST, PUT, DELETE, etc.)
-    allow_headers=["*"], # Allow all headers
+    allow_methods=["*"], 
+    allow_headers=["*"], 
 )
 
 app.mount("/static", StaticFiles(directory=WEBAPP_DIR), name="static")
 
 # --- Telegram Bot Webhook Configuration ---
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL: Optional[str] = None # Will be set during startup
+WEBHOOK_URL: Optional[str] = None 
 
 ADMIN_ID_STR = os.getenv('ADMIN_ID')
 ADMIN_ID: Optional[int] = None
@@ -81,7 +68,6 @@ except ValueError:
 DATABASE_URL = os.getenv('DATABASE_URL')
 if not DATABASE_URL:
     logger.critical("DATABASE_URL environment variable is not set. The bot will not be able to connect to the database.")
-    # In a production application, you might want to raise an exception here to prevent startup
 
 # --- Aiogram Bot Setup ---
 if not API_TOKEN:
@@ -98,21 +84,21 @@ WILD_SYMBOL = '⭐'
 SCATTER_SYMBOL = '💰'
 ALL_REEL_SYMBOLS = SYMBOLS + [WILD_SYMBOL, SCATTER_SYMBOL]
 
-BET_AMOUNT = 100 # Bet for slots
-COIN_FLIP_BET_AMOUNT = 50 # Bet for coin flip
+BET_AMOUNT = 100 
+COIN_FLIP_BET_AMOUNT = 50 
 
-FREE_COINS_AMOUNT = 500 # Amount of free coins for /get_coins
-COOLDOWN_HOURS = 24 # Cooldown in hours for /get_coins
+FREE_COINS_AMOUNT = 500 
+COOLDOWN_HOURS = 24 
 
-DAILY_BONUS_AMOUNT = 300 # Daily bonus via Web App
+DAILY_BONUS_AMOUNT = 300 
 DAILY_BONUS_COOLDOWN_HOURS = 24
 
-QUICK_BONUS_AMOUNT = 100 # Quick bonus via Web App
+QUICK_BONUS_AMOUNT = 100 
 QUICK_BONUS_COOLDOWN_MINUTES = 15
 
 # XP and Levels
 XP_PER_SPIN = 10
-XP_PER_COIN_FLIP = 5 # XP for coin flip
+XP_PER_COIN_FLIP = 5 
 XP_PER_WIN_MULTIPLIER = 2 
 LEVEL_THRESHOLDS = [
     0,     # Level 1: 0 XP
@@ -133,19 +119,18 @@ def get_level_from_xp(xp: int) -> int:
     """Determines user level based on XP (1-based)."""
     for i, threshold in enumerate(LEVEL_THRESHOLDS):
         if xp < threshold:
-            return i + 1 # Levels start from 1, indexes from 0
-    return len(LEVEL_THRESHOLDS) # Max level
+            return i + 1 
+    return len(LEVEL_THRESHOLDS) 
 
 def get_xp_for_next_level(level: int) -> int:
     """Returns XP needed for the next level (or for the current if it's the last)."""
-    # Level is 1-based. To get threshold for next level, use current level as index (e.g., Level 1 -> index 1 for Level 2 threshold)
-    if level >= len(LEVEL_THRESHOLDS): # If current level is already max or beyond
-        return LEVEL_THRESHOLDS[-1] # Return the highest threshold
-    return LEVEL_THRESHOLDS[level] # Return threshold for the next level (e.g., for Level 1, returns LEVEL_THRESHOLDS[1] which is 100 XP for Level 2)
+    if level >= len(LEVEL_THRESHOLDS): 
+        return LEVEL_THRESHOLDS[-1] 
+    return LEVEL_THRESHOLDS[level] 
 
 
 PAYOUTS = {
-    ('🍒', '🍒', '🍒'): 1000, ('🍋', '🍋', '🍋'): 800, ('🍊', '�', '🍊'): 600,
+    ('🍒', '🍒', '🍒'): 1000, ('🍋', '🍋', '🍋'): 800, ('🍊', '🍊', '🍊'): 600,
     ('🍇', '🍇', '🍇'): 400, ('🔔', '🔔', '🔔'): 300, ('💎', '💎', '💎'): 200,
     ('🍀', '🍀', '🍀'): 150, ('⭐', '⭐', '⭐'): 2000, 
     ('🍒', '🍒'): 100, ('🍋', '🍋'): 80, ('🍊', '🍊'): 60,
@@ -765,7 +750,8 @@ class BlackjackRoom:
         if len(self.players) >= self.max_players: return False, "Room is full."
         if user_id in self.players: return False, "Player already in room."
         player = BlackjackPlayer(user_id, username, websocket); self.players[user_id] = player
-        await self.send_room_state_to_all(); return True, "Joined room successfully."
+        # Don't send state immediately here, wait for accept() in endpoint
+        return True, "Joined room successfully."
     async def remove_player(self, user_id: int):
         if user_id in self.players:
             del self.players[user_id]; print(f"Player {user_id} removed from room {self.room_id}")
@@ -966,11 +952,15 @@ class BlackjackRoomManager:
                         room.timer_countdown = 20
                         room.game_start_timer = asyncio.create_task(self._start_game_after_delay(room_id, 20))
                         print(f"Room {room_id}: Game start timer initiated for 20 seconds.")
-                    await room.send_room_state_to_all(); return room_id
+                    # Don't call send_room_state_to_all here, it's handled in the endpoint after accept()
+                    return room_id
         new_room_id = str(uuid.uuid4())[:8]; new_room = BlackjackRoom(new_room_id)
         self.rooms[new_room_id] = new_room
         success, msg = await new_room.add_player(user_id, username, websocket)
-        if success: print(f"Player {user_id} created and joined new room {new_room_id}"); await new_room.send_room_state_to_all(); return new_room_id
+        if success: 
+            print(f"Player {user_id} created and joined new room {new_room_id}")
+            # Don't call send_room_state_to_all here, it's handled in the endpoint after accept()
+            return new_room_id
         return None
     async def _start_game_after_delay(self, room_id: str, delay: int):
         room = self.rooms.get(room_id)
@@ -990,14 +980,26 @@ blackjack_room_manager = BlackjackRoomManager()
 
 # --- WebSocket Endpoint ---
 @app.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: str): # user_id as str initially from path
-    user_id_int = int(user_id) # Convert to int for internal use
+async def websocket_endpoint(websocket: WebSocket, user_id: str):
+    user_id_int = int(user_id)
+
+    # --- CRITICAL FIX: Accept the WebSocket connection FIRST ---
+    await websocket.accept() 
+    # --- END CRITICAL FIX ---
 
     user_data_db = get_user_data(user_id_int)
     username = user_data_db.get("username", f"Гравець {str(user_id_int)[-4:]}")
     
     room_id = await blackjack_room_manager.create_or_join_room(user_id_int, username, websocket)
-    if not room_id: await websocket.close(code=1008, reason="Could not join/create room."); return
+    if not room_id:
+        await websocket.close(code=1008, reason="Could not join/create room."); 
+        return
+
+    # Now that the connection is accepted and player is in a room, send initial state
+    room = blackjack_room_manager.rooms.get(room_id)
+    if room:
+        await room.send_room_state_to_all()
+
     try:
         while True:
             data = await websocket.receive_text()
