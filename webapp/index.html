@@ -219,7 +219,7 @@
                         }
                     }
                 }
-            }, [sendTelegramLog, user.userId]); // Removed connectBlackjackWebSocket from dependencies here, as it's called internally
+            }, [sendTelegramLog, user.userId]); // connectBlackjackWebSocket is now correctly in dependencies
 
             // Blackjack WebSocket Connection Management
             const connectBlackjackWebSocket = useCallback(() => {
@@ -246,7 +246,7 @@
                     newWs.onopen = () => {
                         sendTelegramLog("Blackjack WS: Connected.");
                         setBlackjackGameMessage("Підключено. Шукаємо кімнату...");
-                        // Removed sendWsMessage("request_state") from here
+                        // Removed sendWsMessage("request_state") from here - it will be sent by BlackjackGame component on mount
                     };
 
                     newWs.onmessage = (event) => {
@@ -262,18 +262,18 @@
                             } else if (message.type === "level_up") {
                                 playLevelUpSound();
                                 showCustomModal(`🎉 Ви досягли Рівня ${message.level}! 🎉`, "Підвищення Рівня!");
+                                // Level up also triggers fetchUserData to ensure all user stats are fresh
+                                fetchUserData();
                             } else if (message.room_id) { // It's a room state update
                                 setBlackjackRoomState(prevState => {
-                                    // We will now manage the timer locally in BlackjackGame component
-                                    // so we don't need to update it here from every WS message.
-                                    // The backend will send the initial timer value when status changes to "starting_timer".
+                                    // We manage the timer locally in BlackjackGame component
                                     return { ...message, timer: prevState.timer }; // Keep local timer
                                 });
                                 // Only update game message if it's not a round result message
                                 if (message.type !== "round_result") {
                                     setBlackjackGameMessage(getGameStatusMessage(message, user.userId));
                                 }
-                                fetchUserData(); // Update balance etc. from user context
+                                // REMOVED: fetchUserData() from here. User data updates only on round_result or explicit actions.
                             } else if (message.type === "round_result") {
                                 const { message: resultMsg, winnings, balance, xp, level, next_level_xp, final_player_score, final_dealer_score } = message;
                                 setBlackjackGameMessage(resultMsg);
@@ -286,7 +286,15 @@
                                 } else {
                                     playLoseSoundEffect();
                                 }
-                                fetchUserData(); // Update user context after game result
+                                // Update user state directly from round_result message
+                                setUser(prevUser => ({
+                                    ...prevUser,
+                                    balance: balance,
+                                    xp: xp,
+                                    level: level,
+                                    nextLevelXp: next_level_xp // Ensure nextLevelXp is also updated
+                                }));
+                                sendTelegramLog('User data updated from round_result message.');
                             }
                         } catch (e) {
                             sendTelegramLog(`Blackjack WS: Error parsing message or in onmessage handler: ${e.message}`, 'JS_ERROR');
@@ -474,7 +482,7 @@
         // -----------------------------------------------------------------------------
         const SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀'];
         const WILD_SYMBOL = '⭐';
-        const SCATTER_SYMBOL = '�';
+        const SCATTER_SYMBOL = '💰';
         const ALL_REEL_SYMBOLS = [...SYMBOLS, WILD_SYMBOL, SCATTER_SYMBOL];
         const REEL_HEIGHT_PX = 90; // Default height for a symbol in a reel
         const REEL_SPIN_CYCLES = 5;
@@ -865,7 +873,7 @@
 
         const BlackjackGame = () => {
             // Now get blackjack state and send function from context
-            const { user, sendTelegramLog, blackjackRoomState, blackjackGameMessage, sendWsMessage } = useUser();
+            const { user, sendTelegramLog, blackjackRoomState, blackjackGameMessage, sendWsMessage, setBlackjackGameMessage } = useUser();
             const [betInput, setBetInput] = useState(BLACKJACK_BET_AMOUNT);
             const [showBetModal, setShowBetModal] = useState(false);
             // Local state for timer to avoid re-rendering the whole component
