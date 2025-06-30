@@ -84,7 +84,7 @@ else:
 dp = Dispatcher()
 
 # --- Конфігурація гри ---
-SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀']
+SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '�', '💎', '🍀']
 WILD_SYMBOL = '⭐'
 SCATTER_SYMBOL = '💰'
 ALL_REEL_SYMBOLS = SYMBOLS + [WILD_SYMBOL, SCATTER_SYMBOL]
@@ -500,6 +500,47 @@ async def add_balance_command(message: Message):
 
     await message.reply(f"🎉 {amount} фантиків успішно додано! Ваш новий баланс: {updated_user_data['balance']} фантиків. 🎉")
     logger.info(f"Admin {user_id} added {amount} to their balance. New balance: {updated_user_data['balance']}.")
+
+@dp.message(Command("give_balance"))
+async def give_balance_command(message: Message):
+    sender_id = message.from_user.id
+
+    if ADMIN_ID is None or sender_id != ADMIN_ID:
+        await message.reply("У вас немає дозволу на використання цієї команди.")
+        logger.warning(f"User {sender_id} tried to use /give_balance without admin privileges.")
+        return
+
+    args = message.text.split()
+    if len(args) != 3:
+        await message.reply("Будь ласка, вкажіть ID гравця та суму. Використання: `/give_balance <user_id> <amount>`")
+        return
+
+    try:
+        target_user_id = int(args[1])
+        amount = int(args[2])
+        if amount <= 0:
+            await message.reply("Сума має бути позитивним числом.")
+            return
+    except ValueError:
+        await message.reply("Невірний ID гравця або сума. Будь ласка, введіть числові значення.")
+        return
+
+    target_user_data = get_user_data(target_user_id)
+    if target_user_data['balance'] == 0 and target_user_data['username'] == 'Error Player':
+        await message.reply(f"Користувача з ID {target_user_id} не знайдено або сталася помилка при отриманні його даних.")
+        logger.warning(f"Admin {sender_id} tried to give balance to non-existent or error user {target_user_id}.")
+        return
+
+    new_balance = target_user_data['balance'] + amount
+    update_user_data(target_user_id, balance=new_balance)
+    updated_target_user_data = get_user_data(target_user_id)
+
+    await message.reply(
+        f"🎉 {amount} фантиків успішно додано гравцю {updated_target_user_data['username']} (ID: {target_user_id})! "
+        f"Його новий баланс: {updated_target_user_data['balance']} фантиків. 🎉"
+    )
+    logger.info(f"Admin {sender_id} gave {amount} to user {target_user_id}. New balance: {updated_target_user_data['balance']}.")
+
 
 @dp.message(Command("get_coins"))
 async def get_free_coins_command(message: Message):
@@ -1028,7 +1069,7 @@ class BlackjackRoom:
         if not player.is_playing:
             logger.warning(f"handle_action: Player {user_id} tried to act but is not playing (status: {self.status}, is_playing: {player.is_playing}).")
             try:
-                await player.websocket.send_json({"type": "error", "message": "Ви не берете участі в поточному раунді."})
+                await player.websocket.send_json({"type": "error", "message": "Ви не берете участь у поточному раунді."})
             except WebSocketDisconnect:
                 logger.warning(f"Player {user_id} disconnected during error send (handle_action - not playing).")
                 await self.remove_player(user_id)
@@ -1116,7 +1157,10 @@ class BlackjackRoom:
         # Скидаємо стан гравців та роздаємо карти лише тим, хто is_playing
         for player in self.players.values():
             player.reset_for_round() # Скидаємо стан для нового раунду
-            if player.is_playing: # Тільки якщо гравець активний (зробив ставку)
+            # Після reset_for_round, is_playing знову True.
+            # Якщо гравець не зробив ставку, handle_bet вже встановив is_playing = False.
+            # Тому тут ми роздаємо карти тільки тим, хто залишився is_playing = True.
+            if player.is_playing: 
                 player.hand.add_card(self.deck.deal_card())
                 player.hand.add_card(self.deck.deal_card())
                 logger.info(f"Player {player.user_id} dealt: {player.hand.to_json()}")
@@ -1301,7 +1345,7 @@ class BlackjackRoomManager:
                 return room_id
             else:
                 # Кімната не знайдена, але гравець був зареєстрований. Очищаємо і створюємо нову.
-                del self.player_to_room[user_id]
+                del blackjack_room_manager.player_to_room[user_id] # Використовуємо глобальний менеджер
                 logger.warning(f"Player {user_id} was mapped to non-existent room {room_id}. Cleaning up.")
 
         # Пріоритет: шукаємо кімнату з 1 гравцем
@@ -1477,4 +1521,3 @@ async def on_shutdown():
     await dp.storage.close() 
     await bot.session.close() 
     logger.info("Bot session closed.")
-
