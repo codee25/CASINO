@@ -4,31 +4,31 @@ import json
 import random
 import urllib.parse
 import asyncio
-import uuid # <--- ДОДАНО: Імпорт модуля uuid для генерації унікальних ID
+import uuid # <--- КРИТИЧНО: ДОДАНО ІМПОРТ МОДУЛЯ UUID
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional # For type hinting
+from typing import Dict, List, Optional
 
 import psycopg2
-from psycopg2 import sql # For safe SQL query composition
+from psycopg2 import sql
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel # For FastAPI request models
+from pydantic import BaseModel
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message
-from aiogram.filters import CommandStart, Command # For aiogram v3 filters
-from aiogram.client.default import DefaultBotProperties # For bot default settings
+from aiogram.filters import CommandStart, Command
+from aiogram.client.default import DefaultBotProperties
 
 from fastapi.middleware.cors import CORSMiddleware
 
-# --- Logging Configuration ---
+# --- Налаштування логування ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- Environment Variables ---
+# --- Змінні середовища ---
 API_TOKEN = os.getenv('BOT_TOKEN') 
 WEB_APP_FRONTEND_URL = os.getenv('WEB_APP_FRONTEND_URL') 
 WEBHOOK_HOST = os.getenv('RENDER_EXTERNAL_HOSTNAME') 
@@ -39,11 +39,11 @@ WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
 app = FastAPI()
 
 origins = [
-    WEB_APP_FRONTEND_URL, # Дозволяємо ваш фронтенд URL
-    f"https://{WEBHOOK_HOST}", # Дозволяємо ваш бекенд URL
-    "http://localhost", # Для локальної розробки
+    WEB_APP_FRONTEND_URL, 
+    f"https://{WEBHOOK_HOST}", 
+    "http://localhost", 
     "http://localhost:3000",
-    "http://localhost:5173", # Типовий порт для Vite/React dev server
+    "http://localhost:5173", 
 ]
 
 app.add_middleware(
@@ -68,7 +68,7 @@ try:
 except ValueError:
     logger.error(f"Invalid ADMIN_ID provided: '{ADMIN_ID_STR}'. It must be an integer.")
 
-# --- PostgreSQL Database Configuration ---
+# --- Налаштування бази даних PostgreSQL ---
 DATABASE_URL = os.getenv('DATABASE_URL')
 if not DATABASE_URL:
     logger.critical("DATABASE_URL environment variable is not set. The bot will not be able to connect to the database.")
@@ -82,8 +82,8 @@ else:
 
 dp = Dispatcher()
 
-# --- Game Configuration (Matches JS Frontend) ---
-SYMBOLS = ['🍒', '🍋', '🍊', '�', '🔔', '💎', '🍀']
+# --- Конфігурація гри (відповідає JS фронтенду) ---
+SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀']
 WILD_SYMBOL = '⭐'
 SCATTER_SYMBOL = '💰'
 ALL_REEL_SYMBOLS = SYMBOLS + [WILD_SYMBOL, SCATTER_SYMBOL]
@@ -120,14 +120,14 @@ LEVEL_THRESHOLDS = [
 ]
 
 def get_level_from_xp(xp: int) -> int:
-    """Determines user level based on XP (1-based)."""
+    """Визначає рівень користувача на основі XP (від 1)."""
     for i, threshold in enumerate(LEVEL_THRESHOLDS):
         if xp < threshold:
             return i + 1 
     return len(LEVEL_THRESHOLDS) 
 
 def get_xp_for_next_level(level: int) -> int:
-    """Returns XP needed for the next level (or for the current if it's the last)."""
+    """Повертає XP, необхідний для наступного рівня (або для поточного, якщо це останній)."""
     if level >= len(LEVEL_THRESHOLDS): 
         return LEVEL_THRESHOLDS[-1] 
     return LEVEL_THRESHOLDS[level] 
@@ -137,16 +137,16 @@ PAYOUTS = {
     ('🍒', '🍒', '🍒'): 1000, ('🍋', '🍋', '🍋'): 800, ('🍊', '🍊', '🍊'): 600,
     ('🍇', '🍇', '🍇'): 400, ('🔔', '🔔', '🔔'): 300, ('💎', '💎', '💎'): 200,
     ('🍀', '🍀', '🍀'): 150, ('⭐', '⭐', '⭐'): 2000, 
-    ('🍒', '🍒'): 100, ('🍋', '🍋'): 80, ('🍊', '🍊'): 60,
+    ('🍒', '🍒'): 100, ('�', '🍋'): 80, ('🍊', '🍊'): 60,
     ('🍇', '🍇'): 40, ('🔔', '🔔'): 30, ('💎', '💎'): 20,
     ('🍀', '🍀'): 10,
     ('💰', '💰'): 200, ('💰', '💰', '💰'): 500,
 }
 
-# --- Database Functions ---
+# --- Функції для роботи з базою даних ---
 
 def get_db_connection():
-    """Establishes and returns a PostgreSQL database connection using the URL."""
+    """Встановлює та повертає з'єднання з базою даних PostgreSQL за допомогою URL."""
     conn = None
     if not DATABASE_URL:
         logger.error("Attempted to connect to DB, but DATABASE_URL is not set.")
@@ -168,7 +168,7 @@ def get_db_connection():
         raise
 
 def init_db():
-    """Initializes tables and performs migrations for the PostgreSQL database."""
+    """Ініціалізує таблиці та виконує міграції для бази даних PostgreSQL."""
     conn = None
     try:
         conn = get_db_connection()
@@ -209,7 +209,7 @@ def init_db():
             conn.close()
 
 def get_user_data(user_id: int | str) -> dict:
-    """Retrieves all user data from DB. Creates a new user if not exists."""
+    """Отримує всі дані користувача з БД. Створює нового користувача, якщо він не існує."""
     user_id_int = int(user_id) 
     conn = None
     try:
@@ -222,7 +222,6 @@ def get_user_data(user_id: int | str) -> dict:
         result = cursor.fetchone()
         if result:
             logger.info(f"Retrieved user {user_id_int} data: balance={result[1]}, xp={result[2]}, level={result[3]}")
-            # Ensure datetime objects are timezone-aware UTC
             last_free_coins_claim_db = result[4]
             if last_free_coins_claim_db and last_free_coins_claim_db.tzinfo is None:
                 last_free_coins_claim_db = last_free_coins_claim_db.replace(tzinfo=timezone.utc)
@@ -264,7 +263,7 @@ def get_user_data(user_id: int | str) -> dict:
             conn.close()
 
 def update_user_data(user_id: int | str, **kwargs):
-    """Updates user data in the PostgreSQL database. Accepts keyword arguments for update."""
+    """Оновлює дані користувача в базі даних PostgreSQL. Приймає аргументи-ключові слова для оновлення."""
     user_id_int = int(user_id)
     conn = None
     try:
@@ -277,7 +276,6 @@ def update_user_data(user_id: int | str, **kwargs):
         update_fields_parts = []
         update_values = []
 
-        # Populate fields_to_update with current DB values first, then override with kwargs
         fields_to_update = {
             'username': kwargs.get('username', current_data_from_db.get('username', 'Unnamed Player')),
             'balance': kwargs.get('balance', current_data_from_db.get('balance', 0)),
@@ -288,7 +286,6 @@ def update_user_data(user_id: int | str, **kwargs):
             'last_quick_bonus_claim': kwargs.get('last_quick_bonus_claim', current_data_from_db.get('last_quick_bonus_claim'))
         }
         
-        # Ensure datetime objects are timezone-aware UTC before saving
         for key in ['last_free_coins_claim', 'last_daily_bonus_claim', 'last_quick_bonus_claim']:
             if fields_to_update[key] and fields_to_update[key].tzinfo is None:
                 fields_to_update[key] = fields_to_update[key].replace(tzinfo=timezone.utc)
@@ -317,7 +314,7 @@ def update_user_data(user_id: int | str, **kwargs):
             conn.close()
 
 def check_win_conditions(symbols: List[str]) -> int:
-    """Checks winning combinations for a 3-reel slot, considering Wild and Scatter."""
+    """Перевіряє виграшні комбінації для 3-барабанного слота, враховуючи Wild і Scatter."""
     winnings = 0
     s1, s2, s3 = symbols
     logger.info(f"Checking win conditions for symbols: {symbols}")
@@ -447,7 +444,7 @@ def coin_flip_game_logic(user_id: int | str, choice: str) -> Dict:
         'next_level_xp': get_xp_for_next_level(final_user_data['level'])
     }
 
-# --- Telegram Bot Handlers (aiogram v3 syntax) ---
+# --- Обробники Telegram-бота (aiogram v3 синтаксис) ---
 @dp.message(CommandStart())
 async def send_welcome(message: Message):
     user_id = message.from_user.id

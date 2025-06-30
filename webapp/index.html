@@ -40,10 +40,7 @@
 
         // Ensure Tone is globally available from the CDN script in index.html
         const Tone = window.Tone || {
-            context: { state: 'suspended', resume: async () => { console.warn("Tone.context.resume not available. Tone.js might not be loaded."); }, start: async () => { console.warn("Tone.context.start not available. Tone.js might not be loaded."); } },
-            MembraneSynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; },
-            PolySynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; },
-            NoiseSynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; }
+            context: { state: 'suspended', resume: async () => { console.warn("Tone.context.resume not available. Tone.js might not be loaded."); }, start: async () => { console.warn("Tone.context.start not available. Tone.js might not be loaded."); } }
         };
 
 
@@ -66,10 +63,14 @@
             const [isLoading, setIsLoading] = useState(true);
             const [error, setError] = useState(null);
 
-            // Backend API URL (ВАШ АКТУАЛЬНИЙ URL!)
-            // !!! ВСТАВТЕ СЮДИ АКТУАЛЬНИЙ URL ВАШОГО WEB SERVICE (БОТА) НА RENDER.COM !!!
-            // НАПРИКЛАД: 'https://ваш-унікальний-домен.onrender.com'
-            const API_BASE_URL = 'https://casino-0h0l.onrender.com'; // <--- ЗМІНІТЬ ЦЕЙ РЯДОК!
+            // ===========================================================================================
+            // >>>>>>>>>>>>> ВАЖЛИВО: ОНОВІТЬ ЦЕЙ URL НА АКТУАЛЬНИЙ URL ВАШОГО WEB SERVICE НА RENDER.COM <<<<<<<<<<<<<<
+            // ПРИКЛАД: 'https://ваш-унікальний-домен.onrender.com'
+            // ЗАМІНІТЬ 'https://casino-0h0l.onrender.com' НА ВАШ ВЛАСНИЙ URL З Render.com
+            // ===========================================================================================
+            const API_BASE_URL = 'https://casino-0h0l.onrender.com'; // <--- ПЕРЕКОНАЙТЕСЯ, ЩО ЦЕ ВАШ АКТУАЛЬНИЙ URL
+            // ===========================================================================================
+
 
             // Helper to send logs to Telegram bot for debugging
             const sendTelegramLog = useCallback((message, type = 'JS_LOG') => {
@@ -118,8 +119,8 @@
 
                         if (!response.ok) {
                             const errData = await response.json();
-                            sendTelegramLog(`Balance fetch API failed: ${errData.error || 'Unknown error'}`, 'JS_ERROR');
-                            throw new Error(errData.error || 'Failed to fetch user data');
+                            sendTelegramLog(`Balance fetch API failed: ${errData.detail || 'Unknown error'}`, 'JS_ERROR');
+                            throw new Error(errData.detail || 'Failed to fetch user data');
                         }
 
                         const data = await response.json();
@@ -366,6 +367,10 @@
 
                     if (response.ok) {
                         await animateReels(data.symbols); // Animate with actual results
+                        
+                        // === ДОДАНО: ЗАтримка перед оновленням UI ===
+                        await new Promise(resolve => setTimeout(resolve, 1500)); // Затримка 1.5 секунди
+
                         await fetchUserData(); // Update balance and XP from backend
 
                         if (data.winnings > 0) {
@@ -385,10 +390,10 @@
                             sendTelegramLog('Lose on spin.');
                         }
                     } else {
-                        showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка сервера.'}`, "Помилка Спіна");
+                        showCustomModal(`❌ Помилка: ${data.detail || 'Невідома помилка сервера.'}`, "Помилка Спіна");
                         setMessageClass('text-red-500 font-bold');
                         playLoseSoundEffect();
-                        sendTelegramLog(`Spin API failed: ${data.error || 'Unknown'}`, 'JS_ERROR');
+                        sendTelegramLog(`Spin API failed: ${data.detail || 'Unknown'}`, 'JS_ERROR');
                     }
                 } catch (error) {
                     console.error('Помилка при спіні:', error);
@@ -421,7 +426,7 @@
                         {/* Reel 3 */}
                         <div id="reel3" ref={reelRefs[2]} className="reel relative w-24 h-24 md:w-28 md:h-28 rounded-lg bg-gray-800 border-3 border-yellow-500 overflow-hidden shadow-inner transform-gpu">
                             <div className="reel-content absolute top-0 left-0 w-full h-full"></div>
-                        </div>
+                            </div>
                         <div className="absolute -bottom-3 left-1/2 transform -translate-x-1/2 w-3/4 h-2 bg-gradient-to-r from-red-500 to-yellow-400 rounded-b-lg shadow-lg"></div>
                     </div>
 
@@ -494,8 +499,8 @@
                         await fetchUserData(); // Update balance and XP from backend
                         sendTelegramLog(`Coin Flip Result: ${data.result}, Winnings: ${data.winnings}`);
                     } else {
-                        showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка сервера.'}`, "Помилка Підкидання");
-                        sendTelegramLog(`Coin Flip API failed: ${data.error || 'Unknown'}`, 'JS_ERROR');
+                        showCustomModal(`❌ Помилка: ${data.detail || 'Невідома помилка сервера.'}`, "Помилка Підкидання");
+                        sendTelegramLog(`Coin Flip API failed: ${data.detail || 'Unknown'}`, 'JS_ERROR');
                     }
                 } catch (error) {
                     console.error('Помилка при підкиданні монетки:', error);
@@ -596,8 +601,8 @@
 
                     if (!response.ok) {
                         const errData = await response.json();
-                        sendTelegramLog(`Leaderboard API error: ${errData.error || 'Unknown'}`, 'JS_ERROR');
-                        throw new Error(errData.error || 'Failed to fetch leaderboard data');
+                        sendTelegramLog(`Leaderboard API error: ${errData.detail || 'Unknown'}`, 'JS_ERROR');
+                        throw new Error(errData.detail || 'Failed to fetch leaderboard data');
                     }
 
                     const data = await response.json();
@@ -711,7 +716,11 @@
             useEffect(() => {
                 if (!user.userId || !API_BASE_URL) return;
 
-                const websocketUrl = `wss://${new URL(API_BASE_URL).host}/ws/${user.userId}`;
+                // Dynamically determine WebSocket protocol based on API_BASE_URL
+                const apiBaseUrlObj = new URL(API_BASE_URL);
+                const wsProtocol = apiBaseUrlObj.protocol === 'https:' ? 'wss:' : 'ws:';
+                const websocketUrl = `${wsProtocol}//${apiBaseUrlObj.host}/ws/${user.userId}`;
+
                 sendTelegramLog(`Attempting to connect WebSocket to: ${websocketUrl}`);
                 const newWs = new WebSocket(websocketUrl);
 
@@ -1066,9 +1075,9 @@
                         fetchUserData();
                         sendTelegramLog(`Daily Bonus claimed: ${data.amount}`);
                     } else {
-                        showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка.'}`, "Помилка Винагороди");
+                        showCustomModal(`❌ Помилка: ${data.detail || 'Невідома помилка.'}`, "Помилка Винагороди");
                         fetchUserData(); // Fetch updated data to refresh cooldown
-                        sendTelegramLog(`Daily Bonus API failed: ${data.error || 'Unknown'}`, 'JS_ERROR');
+                        sendTelegramLog(`Daily Bonus API failed: ${data.detail || 'Unknown'}`, 'JS_ERROR');
                     }
                 } catch (error) {
                     console.error('Помилка при отриманні щоденної винагороди:', error);
@@ -1142,9 +1151,9 @@
                         fetchUserData();
                         sendTelegramLog(`Quick Bonus claimed: ${data.amount}`);
                     } else {
-                        showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка.'}`, "Помилка Бонусу");
+                        showCustomModal(`❌ Помилка: ${data.detail || 'Невідома помилка.'}`, "Помилка Бонусу");
                         fetchUserData(); // Fetch updated data to refresh cooldown
-                        sendTelegramLog(`Quick Bonus API failed: ${data.error || 'Unknown'}`, 'JS_ERROR');
+                        sendTelegramLog(`Quick Bonus API failed: ${data.detail || 'Unknown'}`, 'JS_ERROR');
                     }
                 } catch (error) {
                     console.error('Помилка при отриманні швидкого бонусу:', error);
@@ -1289,7 +1298,7 @@
                             onClick={() => setCurrentPage('blackjack')} 
                             className={`nav-button p-2 rounded-full text-2xl transition-all duration-200 ${currentPage === 'blackjack' ? 'bg-yellow-500 text-gray-900 scale-110 shadow-lg' : 'text-gray-700 hover:text-gray-800'}`}
                         >
-                            ♠️ {/* Using a spade icon for Blackjack */}
+                            ♠️ 
                         </button>
                         <button
                             onClick={() => setCurrentPage('leaderboard')}
