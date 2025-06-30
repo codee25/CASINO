@@ -133,7 +133,7 @@ def get_xp_for_next_level(level: int) -> int:
 PAYOUTS = {
     ('🍒', '🍒', '🍒'): 1000, ('🍋', '🍋', '🍋'): 800, ('🍊', '🍊', '🍊'): 600,
     ('🍇', '🍇', '🍇'): 400, ('🔔', '🔔', '🔔'): 300, ('💎', '💎', '💎'): 200,
-    ('�', '🍀', '🍀'): 150, ('⭐', '⭐', '⭐'): 2000, 
+    ('🍀', '🍀', '🍀'): 150, ('⭐', '⭐', '⭐'): 2000, 
     ('🍒', '🍒'): 100, ('🍋', '🍋'): 80, ('🍊', '🍊'): 60,
     ('🍇', '🍇'): 40, ('🔔', '🔔'): 30, ('💎', '💎'): 20,
     ('🍀', '🍀'): 10,
@@ -764,6 +764,40 @@ class BlackjackRoom:
         self.round_in_progress = False # Додано для відстеження активності раунду
         self.ping_task: Optional[asyncio.Task] = None # Для heartbeat
 
+    async def _start_game_after_delay(self, room_id: str, delay: int):
+        """Внутрішня функція для запуску таймера гри."""
+        room = blackjack_room_manager.rooms.get(room_id)
+        if not room:
+            logger.warning(f"Attempted to start timer for non-existent room {room_id}.")
+            return
+        
+        logger.info(f"Room {room_id}: Timer countdown started from {delay} seconds.")
+        for i in range(delay, 0, -1):
+            room.timer_countdown = i
+            # Перевіряємо умови для скасування таймера
+            if room.status != "starting_timer" or len(room.players) < room.min_players:
+                logger.info(f"Room {room_id} timer cancelled/interrupted. Status: {room.status}, Players: {len(room.players)}")
+                if len(room.players) < room.min_players:
+                    room.status = "waiting" # Повертаємося до очікування, якщо гравців стало менше
+                room.timer_countdown = 0
+                await room.send_room_state_to_all()
+                return
+            await room.send_room_state_to_all()
+            await asyncio.sleep(1)
+        
+        # Таймер завершено
+        if room.status == "starting_timer" and len(room.players) >= room.min_players:
+            logger.info(f"Room {room_id}: Timer finished, moving to betting phase.")
+            room.status = "betting"
+            room.timer_countdown = 0
+            await room.send_room_state_to_all()
+        else:
+            logger.info(f"Room {room_id}: Timer finished but conditions not met for betting. Status: {room.status}, Players: {len(room.players)}")
+            room.status = "waiting" # Повертаємося до очікування, якщо умови не виконані
+            room.timer_countdown = 0
+            await room.send_room_state_to_all()
+
+
     async def add_player(self, user_id: int, username: str, websocket: WebSocket):
         if len(self.players) >= self.max_players:
             return False, "Кімната повна."
@@ -786,6 +820,7 @@ class BlackjackRoom:
             if self.game_start_timer and not self.game_start_timer.done():
                 self.game_start_timer.cancel()
             self.timer_countdown = 20 # Таймер на 20 секунд
+            # ВИПРАВЛЕННЯ: Викликаємо метод класу через self
             self.game_start_timer = asyncio.create_task(self._start_game_after_delay(self.room_id, self.timer_countdown))
             logger.info(f"Room {self.room_id}: Game start timer initiated for {self.timer_countdown} seconds.")
             await self.send_room_state_to_all() # Оновити стан з таймером
@@ -839,6 +874,10 @@ class BlackjackRoom:
                 try:
                     await player.websocket.send_json({"type": "ping"})
                     logger.debug(f"Sent ping to player {player.user_id} in room {self.room_id}.")
+                except WebSocketDisconnect:
+                    logger.warning(f"Player {player.user_id} in room {self.room_id} already disconnected during ping. Removing.")
+                    if player.user_id in self.players:
+                        await self.remove_player(player.user_id)
                 except Exception as e:
                     logger.warning(f"Failed to send ping to player {player.user_id} in room {self.room_id}: {e}. Removing player.")
                     # Якщо ping не вдається, вважаємо гравця відключеним
@@ -848,7 +887,8 @@ class BlackjackRoom:
 
     async def send_room_state_to_all(self):
         state = self.get_current_state()
-        for player in self.players.values():
+        players_to_notify = list(self.players.values()) # Створення копії для безпечної ітерації
+        for player in players_to_notify:
             try:
                 player_state = state.copy()
                 # Дилерська рука: прихована, якщо статус не "dealer_turn" або "round_end"
@@ -861,8 +901,15 @@ class BlackjackRoom:
                     player_state["dealer_score"] = self.dealer_hand.value
                 
                 await player.websocket.send_json(player_state)
+            except WebSocketDisconnect:
+                logger.warning(f"Player {player.user_id} in room {self.room_id} disconnected during state send. Removing.")
+                if player.user_id in self.players:
+                    await self.remove_player(player.user_id)
             except Exception as e:
                 logger.error(f"Error sending state to player {player.user_id} in room {self.room_id}: {e}")
+                if player.user_id in self.players:
+                    await self.remove_player(player.user_id)
+
 
     def get_current_state(self):
         players_data = []
@@ -903,18 +950,34 @@ class BlackjackRoom:
         if not player: return
 
         if self.status != "betting":
-            await player.websocket.send_json({"type": "error", "message": "Ставки приймаються лише на етапі 'betting'."})
+            try:
+                await player.websocket.send_json({"type": "error", "message": "Ставки приймаються лише на етапі 'betting'."})
+            except WebSocketDisconnect:
+                logger.warning(f"Player {user_id} disconnected during error send (handle_bet).")
+                await self.remove_player(user_id)
             return
 
         user_data = get_user_data(user_id)
         if not user_data or user_data["balance"] < amount:
-            await player.websocket.send_json({"type": "error", "message": "Недостатньо фантиків для ставки."})
+            try:
+                await player.websocket.send_json({"type": "error", "message": "Недостатньо фантиків для ставки."})
+            except WebSocketDisconnect:
+                logger.warning(f"Player {user_id} disconnected during error send (handle_bet - insufficient balance).")
+                await self.remove_player(user_id)
             return
         if amount <= 0:
-            await player.websocket.send_json({"type": "error", "message": "Ставка має бути позитивним числом."})
+            try:
+                await player.websocket.send_json({"type": "error", "message": "Ставка має бути позитивним числом."})
+            except WebSocketDisconnect:
+                logger.warning(f"Player {user_id} disconnected during error send (handle_bet - invalid amount).")
+                await self.remove_player(user_id)
             return
         if player.has_bet:
-            await player.websocket.send_json({"type": "error", "message": "Ви вже зробили ставку в цьому раунді."})
+            try:
+                await player.websocket.send_json({"type": "error", "message": "Ви вже зробили ставку в цьому раунді."})
+            except WebSocketDisconnect:
+                logger.warning(f"Player {user_id} disconnected during error send (handle_bet - already bet).")
+                await self.remove_player(user_id)
             return
         
         player.bet = amount
@@ -932,18 +995,30 @@ class BlackjackRoom:
             await self.start_round()
         elif len(self.players) < self.min_players:
             logger.info(f"Room {self.room_id}: Waiting for more players to meet min_players ({self.min_players}). Current: {len(self.players)}")
-            await player.websocket.send_json({"type": "game_message", "message": f"Очікування інших гравців ({len(self.players)}/{self.min_players}) та ставок."})
+            try:
+                await player.websocket.send_json({"type": "game_message", "message": f"Очікування інших гравців ({len(self.players)}/{self.min_players}) та ставок."})
+            except WebSocketDisconnect:
+                logger.warning(f"Player {user_id} disconnected during game_message send (handle_bet).")
+                await self.remove_player(user_id)
 
 
     async def handle_action(self, user_id: int, action: str):
         player = self.players.get(user_id)
         if not player or not player.is_playing:
-            await player.websocket.send_json({"type": "error", "message": "Зараз не ваш хід або ви не граєте."})
+            try:
+                await player.websocket.send_json({"type": "error", "message": "Зараз не ваш хід або ви не граєте."})
+            except WebSocketDisconnect:
+                logger.warning(f"Player {user_id} disconnected during error send (handle_action - not playing).")
+                await self.remove_player(user_id)
             return
         
         current_player = self.get_current_player()
         if not current_player or player.user_id != current_player.user_id:
-             await player.websocket.send_json({"type": "error", "message": "Зараз хід іншого гравця."})
+             try:
+                 await player.websocket.send_json({"type": "error", "message": "Зараз хід іншого гравця."})
+             except WebSocketDisconnect:
+                 logger.warning(f"Player {user_id} disconnected during error send (handle_action - not their turn).")
+                 await self.remove_player(user_id)
              return
 
         if action == "hit":
@@ -953,24 +1028,40 @@ class BlackjackRoom:
             
             if player.hand.value > 21:
                 player.is_playing = False # Гравець перебрав
-                await player.websocket.send_json({"type": "game_message", "message": "Ви перебрали! 💥"})
+                try:
+                    await player.websocket.send_json({"type": "game_message", "message": "Ви перебрали! 💥"})
+                except WebSocketDisconnect:
+                    logger.warning(f"Player {user_id} disconnected during game_message send (busted).")
+                    await self.remove_player(user_id)
                 logger.info(f"Player {user_id} busted with score {player.hand.value}.")
                 await asyncio.sleep(1) # Невелика затримка для відображення повідомлення
                 await self.next_turn()
             elif player.hand.value == 21:
                 player.is_playing = False # Автоматичний stand на 21
-                await player.websocket.send_json({"type": "game_message", "message": "21! Ви зупинились."})
+                try:
+                    await player.websocket.send_json({"type": "game_message", "message": "21! Ви зупинились."})
+                except WebSocketDisconnect:
+                    logger.warning(f"Player {user_id} disconnected during game_message send (21).")
+                    await self.remove_player(user_id)
                 logger.info(f"Player {user_id} got 21. Auto-standing.")
                 await asyncio.sleep(1)
                 await self.next_turn()
         elif action == "stand":
             player.is_playing = False
-            await player.websocket.send_json({"type": "game_message", "message": "Ви зупинились."})
+            try:
+                await player.websocket.send_json({"type": "game_message", "message": "Ви зупинились."})
+            except WebSocketDisconnect:
+                logger.warning(f"Player {user_id} disconnected during game_message send (stand).")
+                await self.remove_player(user_id)
             logger.info(f"Player {user_id} stands with score {player.hand.value}.")
             await asyncio.sleep(0.5) # Невелика затримка для відображення повідомлення
             await self.next_turn()
         else:
-            await player.websocket.send_json({"type": "error", "message": "Невідома дія."})
+            try:
+                await player.websocket.send_json({"type": "error", "message": "Невідома дія."})
+            except WebSocketDisconnect:
+                logger.warning(f"Player {user_id} disconnected during error send (handle_action - unknown action).")
+                await self.remove_player(user_id)
 
     def get_current_player(self) -> Optional[BlackjackPlayer]:
         active_players = [p for p in self.players.values() if p.is_playing]
@@ -1023,7 +1114,11 @@ class BlackjackRoom:
             if player.hand.value == 21 and len(player.hand.cards) == 2:
                 player.is_playing = False # Гравець з блекджеком зупиняється
                 players_with_blackjack.append(player.user_id)
-                await player.websocket.send_json({"type": "game_message", "message": "У вас Блекджек! 🎉"})
+                try:
+                    await player.websocket.send_json({"type": "game_message", "message": "У вас Блекджек! 🎉"})
+                except WebSocketDisconnect:
+                    logger.warning(f"Player {player.user_id} disconnected during game_message send (blackjack).")
+                    await self.remove_player(player.user_id)
                 logger.info(f"Player {player.user_id} has Blackjack!")
                 # Невелика затримка, щоб повідомлення було видно
                 await asyncio.sleep(0.5) 
@@ -1114,20 +1209,28 @@ class BlackjackRoom:
             updated_user_data_for_response = get_user_data(player.user_id)
 
             if new_level > user_data["level"]:
-                await player.websocket.send_json({"type": "level_up", "level": new_level})
+                try:
+                    await player.websocket.send_json({"type": "level_up", "level": new_level})
+                except WebSocketDisconnect:
+                    logger.warning(f"Player {player.user_id} disconnected during level_up send.")
+                    await self.remove_player(player.user_id)
                 logger.info(f"Player {player.user_id} leveled up to {new_level}!")
 
-            await player.websocket.send_json({
-                "type": "round_result",
-                "message": message,
-                "winnings": winnings,
-                "balance": updated_user_data_for_response["balance"],
-                "xp": updated_user_data_for_response["xp"],
-                "level": updated_user_data_for_response["level"],
-                "next_level_xp": get_xp_for_next_level(updated_user_data_for_response["level"]),
-                "final_player_score": player_score,
-                "final_dealer_score": dealer_score 
-            })
+            try:
+                await player.websocket.send_json({
+                    "type": "round_result",
+                    "message": message,
+                    "winnings": winnings,
+                    "balance": updated_user_data_for_response["balance"],
+                    "xp": updated_user_data_for_response["xp"],
+                    "level": updated_user_data_for_response["level"],
+                    "next_level_xp": get_xp_for_next_level(updated_user_data_for_response["level"]),
+                    "final_player_score": player_score,
+                    "final_dealer_score": dealer_score 
+                })
+            except WebSocketDisconnect:
+                logger.warning(f"Player {player.user_id} disconnected during round_result send.")
+                await self.remove_player(player.user_id)
             player.reset_for_round() # Скинути стан гравця для наступного раунду
         
         self.round_in_progress = False # Раунд завершено
@@ -1194,36 +1297,7 @@ class BlackjackRoomManager:
         
         return None # Якщо з якоїсь причини не вдалося приєднатися або створити
 
-    async def _start_game_after_delay(self, room_id: str, delay: int):
-        room = self.rooms.get(room_id)
-        if not room: return
-        
-        logger.info(f"Room {room_id}: Timer countdown started from {delay} seconds.")
-        for i in range(delay, 0, -1):
-            room.timer_countdown = i
-            # Перевіряємо умови для скасування таймера
-            if room.status != "starting_timer" or len(room.players) < room.min_players:
-                logger.info(f"Room {room_id} timer cancelled/interrupted. Status: {room.status}, Players: {len(room.players)}")
-                if len(room.players) < room.min_players:
-                    room.status = "waiting" # Повертаємося до очікування, якщо гравців стало менше
-                room.timer_countdown = 0
-                await room.send_room_state_to_all()
-                return
-            await room.send_room_state_to_all()
-            await asyncio.sleep(1)
-        
-        # Таймер завершено
-        if room.status == "starting_timer" and len(room.players) >= room.min_players:
-            logger.info(f"Room {room_id}: Timer finished, moving to betting phase.")
-            room.status = "betting"
-            room.timer_countdown = 0
-            await room.send_room_state_to_all()
-        else:
-            logger.info(f"Room {room_id}: Timer finished but conditions not met for betting. Status: {room.status}, Players: {len(room.players)}")
-            room.status = "waiting" # Повертаємося до очікування, якщо умови не виконані
-            room.timer_countdown = 0
-            await room.send_room_state_to_all()
-
+    # _start_game_after_delay тепер є методом BlackjackRoom, тому його не потрібно тут перевизначати
 
 blackjack_room_manager = BlackjackRoomManager()
 
@@ -1288,7 +1362,11 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 await websocket.send_json({"type": "error", "message": "Неправильний формат повідомлення (очікується JSON)."})
             except Exception as e:
                 logger.error(f"Error handling WebSocket message from {user_id_int} in room {room_id}: {e}", exc_info=True)
-                await websocket.send_json({"type": "error", "message": f"Помилка сервера: {str(e)}"})
+                # Намагаємося надіслати помилку, але якщо WebSocket вже закритий, це може викликати RuntimeError
+                try:
+                    await websocket.send_json({"type": "error", "message": f"Помилка сервера: {str(e)}"})
+                except RuntimeError:
+                    pass # Ігноруємо, якщо WebSocket вже закритий
     except WebSocketDisconnect:
         logger.info(f"Client {user_id_int} disconnected from room {room_id}.")
         room = blackjack_room_manager.rooms.get(room_id)

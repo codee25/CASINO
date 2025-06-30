@@ -253,9 +253,9 @@
                             const message = JSON.parse(event.data);
                             // Handle ping messages to keep connection alive
                             if (message.type === "ping") {
-                                // Optionally send pong back, though server-side ping is usually enough
-                                // newWs.send(JSON.stringify({ type: "pong" }));
-                                sendTelegramLog("Blackjack WS: Received ping.");
+                                // Respond with pong to server's ping
+                                newWs.send(JSON.stringify({ type: "pong" }));
+                                sendTelegramLog("Blackjack WS: Received ping, sent pong.");
                                 return; 
                             }
 
@@ -994,11 +994,13 @@
 
                     {/* Dealer's Hand */}
                     <div className="dealer-area bg-gray-800 p-4 rounded-xl shadow-lg w-full max-w-lg mb-4 text-center border-2 border-green-700">
-                        {/* Прибрано статичний напис "Дилер:" */}
+                        {/* Прибрано статичний напис "Дилер:" - тепер заголовок динамічний */}
                         <h2 className="text-2xl font-bold text-orange-400 mb-2">
-                            Дилер: {blackjackRoomState.status === "playing" || blackjackRoomState.status === "dealer_turn" || blackjackRoomState.status === "round_end" 
-                                ? blackjackRoomState.dealer_score 
-                                : (blackjackRoomState.dealer_hand.length > 1 ? blackjackRoomState.dealer_hand[0].slice(0,-1) : 'Приховано')}
+                            {blackjackRoomState.dealer_hand.length > 0 ? 
+                                `Дилер: ${blackjackRoomState.status === "playing" || blackjackRoomState.status === "dealer_turn" || blackjackRoomState.status === "round_end" 
+                                    ? blackjackRoomState.dealer_score 
+                                    : 'Приховано'}`
+                                : 'Дилер'} {/* Якщо карт немає, просто "Дилер" */}
                         </h2>
                         <div className="flex justify-center gap-2 flex-wrap">
                             {blackjackRoomState.dealer_hand.map((cardStr, idx) => (
