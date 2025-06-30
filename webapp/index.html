@@ -453,7 +453,7 @@
         const CoinFlip = () => {
             const { user, fetchUserData, API_BASE_URL, sendTelegramLog } = useUser();
             const [message, setMessage] = useState('');
-            const [resultCoin, setResultCoin] = useState(''); // 'heads' or 'tails'
+            const [resultCoin, setResultCoin] = useState(''); // 'heads', 'tails', or 'flipping'
             const [isFlipping, setIsFlipping] = useState(false);
             const [lastChoice, setLastChoice] = useState(null); // To show user's choice
 
@@ -506,20 +506,44 @@
                 }
             };
 
+            const getCoinImage = (result) => {
+                if (result === 'heads') {
+                    return (
+                        <svg className="w-full h-full" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="50" cy="50" r="48" fill="#FFD700" stroke="#DAA520" strokeWidth="2"/>
+                            <path d="M50 20C35 20 25 35 25 50C25 65 35 80 50 80C65 80 75 65 75 50C75 35 65 20 50 20ZM50 30C58.2843 30 65 36.7157 65 45H50V30ZM50 70C41.7157 70 35 63.2843 35 55H50V70Z" fill="#8B4513"/>
+                            <text x="50" y="55" fontFamily="Arial" fontSize="20" fontWeight="bold" fill="#F5F5DC" textAnchor="middle">ОРЕЛ</text>
+                        </svg>
+                    );
+                } else if (result === 'tails') {
+                    return (
+                        <svg className="w-full h-full" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <circle cx="50" cy="50" r="48" fill="#C0C0C0" stroke="#A9A9A9" strokeWidth="2"/>
+                            <path d="M50 20C35 20 25 35 25 50C25 65 35 80 50 80C65 80 75 65 75 50C75 35 65 20 50 20ZM50 30C58.2843 30 65 36.7157 65 45H50V30ZM50 70C41.7157 70 35 63.2843 35 55H50V70Z" fill="#2F4F4F"/>
+                            <text x="50" y="55" fontFamily="Arial" fontSize="20" fontWeight="bold" fill="#F5F5DC" textAnchor="middle">РЕШКА</text>
+                        </svg>
+                    );
+                }
+                return (
+                    <svg className="w-full h-full" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="50" cy="50" r="48" fill="#FFD700" stroke="#DAA520" strokeWidth="2"/>
+                        <text x="50" y="58" fontFamily="Arial" fontSize="40" fontWeight="bold" fill="#8B4513" textAnchor="middle">?</text>
+                    </svg>
+                );
+            };
+
+
             return (
                 <div className="flex-grow flex flex-col items-center justify-around p-4 md:p-8 w-full">
-                    <h1 className="text-3xl md:text-4xl font-extrabold text-yellow-400 mb-4 drop-shadow-lg leading-tight text-center">
-                        Підкидання Монетки
-                    </h1>
+                    {/* Removed H1 "Підкидання Монетки" */}
 
                     <div className="coin-flip-area flex flex-col items-center mb-6">
                         <div className={`coin-display text-9xl transition-transform duration-500 ease-out ${isFlipping ? 'animate-spin-3d' : ''}`}>
-                            {/* Display coin emoji based on resultCoin state */}
-                            {resultCoin === 'heads' ? '🪙' : resultCoin === 'tails' ? '🟡' : '❓'}
+                            {getCoinImage(resultCoin)}
                         </div>
                         {/* Show message from backend after flip */}
                         {!isFlipping && message && (
-                            <p className={`text-gray-300 text-lg mt-2 text-center font-bold ${message.includes('Вітаємо') ? 'text-green-400' : 'text-red-400'}`}>
+                            <p className={`message text-gray-300 text-lg mt-2 text-center font-bold ${message.includes('Вітаємо') ? 'text-green-400' : 'text-red-400'}`}>
                                 {message}
                             </p>
                         )}
@@ -660,7 +684,7 @@
         // -----------------------------------------------------------------------------
         // Top Header Component (Balance, XP, Level, Bonuses)
         // -----------------------------------------------------------------------------
-        const TopHeader = () => { // Removed onShowLeaderboard prop as it's no longer needed in header
+        const TopHeader = () => { 
             const { user, fetchUserData, API_BASE_URL, sendTelegramLog } = useUser();
             const [dailyBonusCooldownText, setDailyBonusCooldownText] = useState('');
             const [quickBonusCooldownText, setQuickBonusCooldownText] = useState('');
@@ -840,7 +864,7 @@
                         💰
                         <span id="quickBonusCooldown" className="quick-bonus-countdown">{quickBonusCooldownText}</span>
                     </button>
-                    {/* Leaderboard Button removed from here, now only in bottom nav */}
+                    {/* Leaderboard Button was here, now removed as per your request to avoid duplication. Only in bottom nav now. */}
 
                     {/* Balance and Level Display */}
                     <div className="balance-area absolute top-16 left-1/2 transform -translate-x-1/2 bg-gray-800 rounded-b-xl py-2 px-4 shadow-inner border border-gray-700 border-t-0 w-full max-w-xs md:max-w-sm z-20">
