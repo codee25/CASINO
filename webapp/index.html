@@ -72,8 +72,8 @@
             const [blackjackRoomState, setBlackjackRoomState] = useState({
                 room_id: null,
                 status: "disconnected", // Default to disconnected
-                dealer_hand: [], // This will now always be empty or null
-                dealer_score: 0, // This will now always be 0
+                dealer_hand: [], 
+                dealer_score: 0, 
                 players: [],
                 current_player_turn: null,
                 player_count: 0,
@@ -282,7 +282,7 @@
                                     setBlackjackGameMessage(getGameStatusMessage(message, user.userId));
                                 }
                             } else if (message.type === "round_result") {
-                                const { message: resultMsg, winnings, balance, xp, level, next_level_xp, final_player_score, final_dealer_score } = message;
+                                const { message: resultMsg, winnings, balance, xp, level, next_level_xp, final_player_score } = message; // Removed final_dealer_score
                                 setBlackjackGameMessage(resultMsg);
                                 showCustomModal(
                                     `Результат: ${resultMsg}<br/>Ваш рахунок: ${final_player_score}<br/>Виграш: ${winnings} фантиків!`,
@@ -392,7 +392,7 @@
                 <UserContext.Provider value={{ 
                     user, setUser, fetchUserData, isLoading, error, API_BASE_URL, sendTelegramLog,
                     blackjackRoomState, blackjackGameMessage, sendWsMessage, setBlackjackGameMessage,
-                    connectBlackjackWebSocket // Expose connect function for BlackjackGame component
+                    connectBlackjackWebSocket 
                 }}>
                     {children}
                 </UserContext.Provider>
@@ -423,7 +423,7 @@
             }
 
             // Initialize sounds ONLY after Tone.start() is successful or if already running
-            if (!spinStartSound) { // Prevent re-initialization if already done
+            if (!spinStartSound) { 
                 spinStartSound = new Tone.MembraneSynth({ envelope: { attack: 0.01, decay: 0.1, sustain: 0.05, release: 0.1 } }).toDestination();
                 reelStopSound = new Tone.MembraneSynth({ envelope: { attack: 0.005, decay: 0.05, sustain: 0.01, release: 0.1 } }).toDestination();
                 winSound = new Tone.PolySynth(Tone.Synth, { oscillator: { type: "sine" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 } }).toDestination();
@@ -959,6 +959,10 @@
                         {blackjackRoomState.status === "betting" && !player.has_bet && isCurrentPlayer && (
                             <p className="text-yellow-300 text-sm animate-pulse">Зробіть ставку!</p>
                         )}
+                        {/* New message for players not playing this round */}
+                        {blackjackRoomState.status !== "betting" && !player.is_playing && player.user_id === user.userId && (
+                            <p className="text-red-400 text-sm mt-1">Ви не берете участь у цьому раунді.</p>
+                        )}
                     </div>
                 );
             };
@@ -970,7 +974,8 @@
 
             const allPlayersHaveBet = () => {
                 if (blackjackRoomState.players.length === 0) return false;
-                return blackjackRoomState.players.every(p => p.has_bet);
+                // Consider a player as "finished betting" if they have bet OR they are not playing this round
+                return blackjackRoomState.players.every(p => p.has_bet || !p.is_playing);
             };
 
 
@@ -992,20 +997,6 @@
                     )}
 
                     {/* Removed Dealer's Hand area completely */}
-                    {/* <div className="dealer-area bg-gray-800 p-4 rounded-xl shadow-lg w-full max-w-lg mb-4 text-center border-2 border-green-700">
-                        <h2 className="text-2xl font-bold text-orange-400 mb-2">
-                            {blackjackRoomState.dealer_hand.length > 0 ? 
-                                `Дилер: ${blackjackRoomState.status === "playing" || blackjackRoomState.status === "dealer_turn" || blackjackRoomState.status === "round_end" 
-                                    ? blackjackRoomState.dealer_score 
-                                    : 'Приховано'}`
-                                : 'Дилер'}
-                        </h2>
-                        <div className="flex justify-center gap-2 flex-wrap">
-                            {blackjackRoomState.dealer_hand.map((cardStr, idx) => (
-                                <div key={idx} className="card-item">{getCardDisplay(cardStr)}</div>
-                            ))}
-                        </div>
-                    </div> */}
 
                     {/* Players' Hands */}
                     <div className="players-area flex-grow w-full max-w-lg overflow-y-auto p-2 bg-gray-900 rounded-xl shadow-inner border border-gray-700">
@@ -1367,10 +1358,10 @@
                     case 'leaderboard':
                         return <Leaderboard />;
                     case 'blackjack':
-                        return <BlackjackGame />; // New Blackjack game
-                    case 'game3': // Placeholder for future game
+                        return <BlackjackGame />; 
+                    case 'game3': 
                         return <GamePlaceholder gameName="Колесо Фортуни" icon="🎲" />;
-                    case 'game5': // Placeholder for future game (Poker)
+                    case 'game5': 
                         return <GamePlaceholder gameName="Покер" icon="🃏" />;
                     default:
                         return <SlotMachine />;
@@ -1413,7 +1404,7 @@
                             onClick={() => setCurrentPage('blackjack')} 
                             className={`nav-button p-2 rounded-full text-2xl transition-all duration-200 ${currentPage === 'blackjack' ? 'bg-yellow-500 text-gray-900 scale-110 shadow-lg' : 'text-gray-700 hover:text-gray-800'}`}
                         >
-                            ♠️ {/* Using a spade icon for Blackjack */}
+                            ♠️ 
                         </button>
                         <button
                             onClick={() => setCurrentPage('leaderboard')}
