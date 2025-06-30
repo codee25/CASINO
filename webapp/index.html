@@ -220,7 +220,7 @@
         function playLoseSoundEffect() { if (loseSound && Tone.context.state === 'running') loseSound.triggerAttackRelease("C3", "4n"); }
         function playLevelUpSound() { if (levelUpSound && Tone.context.state === 'running') levelUpSound.triggerAttackRelease(["E4", "G4", "C5"], "0.8n"); }
         function playDailyBonusSound() { if (dailyBonusSound && Tone.context.state === 'running') dailyBonusSound.triggerAttackRelease("G4", "0.5n"); }
-        function playQuickBonusSound() { if (quickBonusSound && Tone.context.state === 'running') coinFlipSound.triggerAttackRelease("C5", "0.1s"); } // Fixed to play coin flip sound
+        function playQuickBonusSound() { if (quickBonusSound && Tone.context.state === 'running') quickBonusSound.triggerAttackRelease("A4", "0.2n"); }
         function playCoinFlipSound() { if (coinFlipSound && Tone.context.state === 'running') coinFlipSound.triggerAttackRelease("C5", "0.1s"); }
 
 
@@ -471,7 +471,7 @@
 
                 setIsFlipping(true);
                 setMessage('');
-                setResultCoin(''); // Clear previous result coin
+                setResultCoin('flipping'); // Indicate flipping state visually
                 setLastChoice(choice);
                 playCoinFlipSound();
                 sendTelegramLog(`Coin Flip: User chose ${choice}, starting flip.`);
@@ -518,7 +518,11 @@
                             {resultCoin === 'heads' ? '🪙' : resultCoin === 'tails' ? '🟡' : '❓'}
                         </div>
                         {/* Show message from backend after flip */}
-                        {!isFlipping && message && <p className="text-gray-300 text-lg mt-2 text-center font-bold">{message}</p>}
+                        {!isFlipping && message && (
+                            <p className={`text-gray-300 text-lg mt-2 text-center font-bold ${message.includes('Вітаємо') ? 'text-green-400' : 'text-red-400'}`}>
+                                {message}
+                            </p>
+                        )}
                         {/* Show user's choice while flipping or before result, if no message */}
                         {isFlipping && lastChoice && <p className="text-gray-300 text-lg mt-2">Ваш вибір: {lastChoice === 'heads' ? 'Орел' : 'Решка'}</p>}
                         {!isFlipping && !message && lastChoice && <p className="text-gray-300 text-lg mt-2">Ви обрали: {lastChoice === 'heads' ? 'Орел' : 'Решка'}</p>}
@@ -606,9 +610,9 @@
                                     <tr>
                                         <th scope="col" className="py-2 px-3">#</th>
                                         <th scope="col" className="py-2 px-3">Ім'я</th>
+                                        {/* Show Level and XP instead of Balance, as it's more relevant for ranking */}
                                         <th scope="col" className="py-2 px-3 text-right">Рівень</th>
-                                        <th scope="col" className="py-2 px-3 text-right">Баланс</th>
-                                        {/* XP Column removed as requested */}
+                                        <th scope="col" className="py-2 px-3 text-right">XP</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -617,8 +621,7 @@
                                             <td className="py-2 px-3 font-bold">{index + 1}</td>
                                             <td className="py-2 px-3">{player.username}</td>
                                             <td className="py-2 px-3 text-right">{player.level}</td>
-                                            <td className="py-2 px-3 text-right">{player.balance}</td>
-                                            {/* XP Data removed as requested */}
+                                            <td className="py-2 px-3 text-right">{player.xp}</td>
                                         </tr>
                                     ))}
                                 </tbody>
@@ -629,11 +632,35 @@
             );
         };
 
+        // -----------------------------------------------------------------------------
+        // Placeholder Game Components
+        // -----------------------------------------------------------------------------
+        const GamePlaceholder = ({ gameName, icon }) => {
+            const { sendTelegramLog } = useUser();
+            useEffect(() => {
+                sendTelegramLog(`Navigated to placeholder game: ${gameName}`);
+            }, [gameName, sendTelegramLog]);
+
+            return (
+                <div className="flex-grow flex flex-col items-center justify-center p-4 md:p-8 w-full">
+                    <h1 className="text-4xl md:text-5xl font-extrabold text-yellow-400 mb-6 drop-shadow-lg leading-tight text-center">
+                        {icon} {gameName} {icon}
+                    </h1>
+                    <p className="text-xl md:text-2xl text-gray-300 text-center max-w-md">
+                        Ця гра зараз у розробці. Слідкуйте за оновленнями!
+                    </p>
+                    <p className="mt-4 text-md text-gray-400">
+                        Дякуємо за терпіння!
+                    </p>
+                </div>
+            );
+        };
+
 
         // -----------------------------------------------------------------------------
-        // Top Header Component (Balance, XP, Level, Bonuses, Leaderboard)
+        // Top Header Component (Balance, XP, Level, Bonuses)
         // -----------------------------------------------------------------------------
-        const TopHeader = ({ onShowLeaderboard }) => {
+        const TopHeader = () => { // Removed onShowLeaderboard prop as it's no longer needed in header
             const { user, fetchUserData, API_BASE_URL, sendTelegramLog } = useUser();
             const [dailyBonusCooldownText, setDailyBonusCooldownText] = useState('');
             const [quickBonusCooldownText, setQuickBonusCooldownText] = useState('');
@@ -884,19 +911,20 @@
                     case 'leaderboard':
                         return <Leaderboard />;
                     case 'game3': // Placeholder for future game
-                        return <div className="flex-grow flex items-center justify-center text-4xl font-bold">Гра 3 (розробляється)</div>;
+                        return <GamePlaceholder gameName="Колесо Фортуни" icon="🎲" />;
                     case 'game4': // Placeholder for future game
-                        return <div className="flex-grow flex items-center justify-center text-4xl font-bold">Гра 4 (розробляється)</div>;
+                        return <GamePlaceholder gameName="Блекджек" icon="♠️" />;
                     case 'game5': // Placeholder for future game
-                        return <div className="flex-grow flex items-center justify-center text-4xl font-bold">Гра 5 (розробляється)</div>;
+                        return <GamePlaceholder gameName="Покер" icon="🃏" />;
                     default:
                         return <SlotMachine />;
                 }
             };
 
-            const handleShowLeaderboard = () => {
-                setCurrentPage('leaderboard');
-            };
+            // This function is no longer passed as a prop from App to TopHeader
+            // const handleShowLeaderboard = () => {
+            //     setCurrentPage('leaderboard');
+            // };
             
             // Log for App component render
             useEffect(() => {
@@ -912,7 +940,6 @@
                     <TopHeader />
 
                     {/* Main Game Content Area - renders current game */}
-                    {/* Removed mt-[120px] and pb-20 - height handled by CSS flexbox */}
                     <div className="relative flex-grow flex flex-col items-center justify-around w-full main-content-area"> 
                         {renderGame()}
                     </div>

@@ -67,19 +67,6 @@ html, body {
     opacity: 1; 
 }
 
-/* Leaderboard Button styling (if it were in header) */
-/* .leaderboard-button {
-    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-    width: 48px; 
-    height: 48px; 
-    padding: 0; 
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1.5rem; 
-    line-height: 1; 
-} */
-
 /* Main Game Content Area - this is the flexible area that holds all game elements */
 .casino-app-container {
     width: 100%;
@@ -91,38 +78,28 @@ html, body {
     overflow: hidden; /* Hide scroll for the entire app container */
 }
 
-.casino-app-container > div.relative.flex-grow { /* Target the main content area */
-    /* Remove fixed margin-top and padding-bottom */
-    margin-top: 0; 
-    padding-bottom: 0;
+/* This targets the div that wraps the current game component (SlotMachine, CoinFlip, etc.) */
+.main-content-area {
+    /* Remove fixed margin-top and padding-bottom - handled by flexbox */
+    margin-top: 0 !important; 
+    padding-bottom: 0 !important;
     /* Use flexbox to take available space and center content */
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center; /* Center content vertically within the available space */
-    flex-grow: 1; /* Allow it to grow and shrink */
+    flex-grow: 1; /* Allow it to grow and shrink to fill space */
     width: 100%;
     /* Reintroduce padding for content */
-    padding: 1rem; /* Adjust as needed */
-    overflow-y: auto; /* Allow content inside this specific div to scroll if it overflows */
+    padding: 1rem; /* Adjust as needed for inner content spacing */
+    overflow-y: auto; /* Allow content inside this specific div to scroll if it overflows (e.g. Leaderboard) */
     box-sizing: border-box; /* Include padding in element's total width and height */
+    
+    /* Calculate height dynamically based on header/balance area and footer */
+    /* Header height (16px) + Balance area height (approx 80px) + Footer height (64px) = ~160px total fixed height */
+    height: calc(100% - 160px); 
+    max-height: calc(100% - 160px); 
 }
-
-/* Adjustments for sticky header/footer to ensure main content uses available space */
-@media (max-width: 768px) {
-    .casino-app-container > div.relative.flex-grow {
-        /* Ensure the content area accounts for header and footer */
-        height: calc(100vh - 160px); /* 100vh - header height - balance height - footer height */
-        max-height: calc(100vh - 160px); 
-    }
-}
-@media (min-width: 769px) {
-    .casino-app-container > div.relative.flex-grow {
-        height: calc(100vh - 160px); 
-        max-height: calc(100vh - 160px);
-    }
-}
-
 
 /* Heading H1 */
 h1 {
@@ -380,7 +357,7 @@ button.pulsing {
     background-color: rgba(0,0,0,0.3);
     border-radius: 8px;
     padding: 0.5rem;
-    max-height: 300px;
+    max-height: 300px; /* Allow leaderboard to scroll if many entries */
     overflow-y: auto;
     border: 1px solid rgba(255,255,255,0.1);
 }
@@ -412,6 +389,26 @@ button.pulsing {
 }
 
 /* New Coin Flip specific styles */
+.coin-flip-area .message { /* Specific styling for coin flip message */
+    font-size: 1.5em; /* Larger font for emphasis */
+    margin-top: 1rem;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    background-color: rgba(0,0,0,0.4);
+    box-shadow: 0 0 10px rgba(255,255,255,0.2);
+}
+
+.coin-flip-area .message.text-green-400 {
+    color: #4CAF50; /* Brighter green for win */
+    text-shadow: 0 0 15px #4CAF50;
+}
+
+.coin-flip-area .message.text-red-400 {
+    color: #F44336; /* Brighter red for lose */
+    text-shadow: 0 0 15px #F44336;
+}
+
+
 .coin-display {
     width: 150px;
     height: 150px;
