@@ -1,327 +1,819 @@
+import logging
+import os
+import json
+import random
+import urllib.parse
+import asyncio # Для асинхронних завдань
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional # Для типізації
+
+import psycopg2
+from psycopg2 import sql # Для безпечного формування SQL-запитів
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from pydantic import BaseModel
-import json
-import os
-import random
-import asyncio
-import uuid # For generating unique room IDs
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional # Ensure these are imported for type hints
-
-# Aiogram imports
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
-from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.client.default import DefaultBotProperties
-from aiogram.filters import CommandStart
+from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message
+from aiogram.filters import CommandStart, Command # Для фільтрів aiogram v3
+from aiogram.client.default import DefaultBotProperties # Для налаштувань бота
 
-@dp.message(CommandStart())
-async def send_welcome(message: Message):
-    await message.answer("Привіт! Натисни кнопку нижче, щоб запустити казино 🎰")
+# --- Налаштування логування ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-# --- Config and Setup ---
+# --- Змінні середовища ---
+# Важливо: Встановіть ці змінні оточення на Render.com для вашого Web Service
+API_TOKEN = os.getenv('BOT_TOKEN') # Змінено з TELEGRAM_BOT_TOKEN для уніфікації
+WEB_APP_FRONTEND_URL = os.getenv('WEB_APP_FRONTEND_URL')
+# RENDER_EXTERNAL_HOSTNAME встановлюється Render.com автоматично.
+# Використовуємо його для формування вебхук URL
+WEBHOOK_HOST = os.getenv('RENDER_EXTERNAL_HOSTNAME')
+
+# Шлях до папки з фронтендом (webapp)
 WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
+
+# --- FastAPI App Setup ---
 app = FastAPI()
 app.mount("/static", StaticFiles(directory=WEBAPP_DIR), name="static")
 
-# --- Environment Variables ---
-# IMPORTANT: You MUST set these environment variables in Render for your Web Service:
-# BOT_TOKEN = <YOUR_TELEGRAM_BOT_TOKEN> (Отримайте від BotFather)
-# WEB_APP_FRONTEND_URL = <YOUR_RENDER_STATIC_SITE_URL> (Наприклад, https://my-casino-app.onrender.com)
-# RENDER_EXTERNAL_HOSTNAME = <YOUR_RENDER_WEB_SERVICE_URL_WITHOUT_TRAILING_SLASH> (Наприклад, https://my-bot-backend.onrender.com)
+# --- Telegram Bot Webhook Configuration ---
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_URL: Optional[str] = None # Буде встановлено під час запуску
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEB_APP_FRONTEND_URL = os.getenv("WEB_APP_FRONTEND_URL", "https://your-static-site-name.onrender.com") # Default for local testing
-WEBHOOK_PATH = "/webhook" # Path where Telegram will send updates
+ADMIN_ID_STR = os.getenv('ADMIN_ID')
+ADMIN_ID: Optional[int] = None
+try:
+    if ADMIN_ID_STR:
+        ADMIN_ID = int(ADMIN_ID_STR)
+except ValueError:
+    logger.error(f"Invalid ADMIN_ID provided: '{ADMIN_ID_STR}'. It must be an integer.")
 
-# Initialize a global variable for WEBHOOK_URL. It will be set on startup.
-WEBHOOK_URL: Optional[str] = None
+# --- Налаштування бази даних PostgreSQL ---
+DATABASE_URL = os.getenv('DATABASE_URL')
+if not DATABASE_URL:
+    logger.critical("DATABASE_URL environment variable is not set. The bot will not be able to connect to the database.")
+    # Якщо DATABASE_URL не встановлено, бот не зможе працювати з даними.
+    # В реальному додатку тут може бути виняток або вихід з програми.
 
 # --- Aiogram Bot Setup ---
-if not BOT_TOKEN:
-    print("CRITICAL ERROR: BOT_TOKEN environment variable not set. Telegram bot will not work.")
-    # You might want to raise an exception or exit in a production environment
-    # For now, we'll proceed, but bot operations will fail.
+# Перевірка BOT_TOKEN, як було у попередній версії main.py
+if not API_TOKEN:
+    logger.critical("API_TOKEN (BOT_TOKEN) environment variable not set. Telegram bot will not work.")
+    # Це потрібно, щоб `aiogram` не викидав `TokenValidationError` при старті,
+    # якщо токен не встановлено. Бот все одно не працюватиме, але програма не впаде одразу.
+    bot = Bot(token="DUMMY_TOKEN", default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+else:
+    bot = Bot(token=API_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 
-default_props = DefaultBotProperties(parse_mode=ParseMode.HTML)
-bot = Bot(token=BOT_TOKEN if BOT_TOKEN else "DUMMY_TOKEN", default=default_props) 
-dp = Dispatcher() 
+# Диспетчер Aiogram v3 ініціалізується без аргументів
+dp = Dispatcher()
 
-# Mock database (in a real application, use a proper database like PostgreSQL, MongoDB, or Firestore)
-# Using a simple dictionary for demonstration purposes. This will reset on server restart.
-users_db: Dict[str, dict] = {} # user_id: {username, balance, xp, level, next_level_xp, last_daily_bonus_claim, last_quick_bonus_claim}
+# --- Конфігурація гри (збігається з JS фронтендом) ---
+SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀']
+WILD_SYMBOL = '⭐'
+SCATTER_SYMBOL = '💰'
+ALL_REEL_SYMBOLS = SYMBOLS + [WILD_SYMBOL, SCATTER_SYMBOL]
 
-# Default XP progression
-LEVEL_XP_REQUIREMENTS = {
-    1: 0, 2: 100, 3: 300, 4: 600, 5: 1000, 6: 1500, 7: 2100, 8: 2800, 9: 3600, 10: 4500
+BET_AMOUNT = 100 # Ставка для слотів
+COIN_FLIP_BET_AMOUNT = 50 # Ставка для підкидання монетки
+
+FREE_COINS_AMOUNT = 500 # Кількість фантиків для /get_coins
+COOLDOWN_HOURS = 24 # Затримка в годинах для /get_coins
+
+DAILY_BONUS_AMOUNT = 300 # Щоденний бонус через Web App
+DAILY_BONUS_COOLDOWN_HOURS = 24
+
+QUICK_BONUS_AMOUNT = 100 # Швидкий бонус через Web App
+QUICK_BONUS_COOLDOWN_MINUTES = 15
+
+# XP та Рівні
+XP_PER_SPIN = 10
+XP_PER_COIN_FLIP = 5 # XP за підкидання монетки
+XP_PER_WIN_MULTIPLIER = 2 
+LEVEL_THRESHOLDS = [
+    0,     # Level 1: 0 XP
+    100,   # Level 2: 100 XP
+    300,   # Level 3: 300 XP
+    600,   # Level 4: 600 XP
+    1000,  # Level 5: 1000 XP
+    1500,  # Level 6: 1500 XP
+    2200,  # Level 7: 2200 XP
+    3000,  # Level 8: 3000 XP
+    4000,  # Level 9: 4000 XP
+    5500,  # Level 10: 5500 XP
+    7500,  # Level 11: 7500 XP
+    10000  # Level 12: 10000 XP (and beyond)
+]
+
+def get_level_from_xp(xp: int) -> int:
+    """Визначає рівень користувача на основі досвіду."""
+    for i, threshold in enumerate(LEVEL_THRESHOLDS):
+        if xp < threshold:
+            return i # Рівні починаються з 0 для індексу, тому рівень буде i
+    return len(LEVEL_THRESHOLDS) - 1 # Максимальний рівень, якщо XP перевищує всі пороги (наприклад, 12, індекс 11)
+
+def get_xp_for_next_level(level: int) -> int:
+    """Повертає XP, необхідний для наступного рівня (або для поточного, якщо це останній)."""
+    # Рівні у фронтенді починаються з 1, але індекси LEVEL_THRESHOLDS з 0
+    # Тому, якщо level = 1 (перший рівень), ми шукаємо поріг для index 1 (другий рівень)
+    if level >= len(LEVEL_THRESHOLDS):
+        return LEVEL_THRESHOLDS[-1] # Якщо вже на максимальному рівні
+    return LEVEL_THRESHOLDS[level] # Порог для досягнення наступного рівня (level+1)
+
+
+PAYOUTS = {
+    # Три однакові символи (включаючи Wild як замінник)
+    ('🍒', '🍒', '🍒'): 1000,
+    ('🍋', '🍋', '🍋'): 800,
+    ('🍊', '🍊', '🍊'): 600,
+    ('🍇', '🍇', '🍇'): 400,
+    ('🔔', '🔔', '🔔'): 300,
+    ('�', '💎', '💎'): 200,
+    ('🍀', '🍀', '🍀'): 150,
+    ('⭐', '⭐', '⭐'): 2000, # Високий виграш за три Wild
+    
+    # Два однакові символи (включаючи Wild як замінник)
+    ('🍒', '🍒'): 100,
+    ('🍋', '🍋'): 80,
+    ('🍊', '🍊'): 60,
+    ('🍇', '🍇'): 40,
+    ('🔔', '🔔'): 30,
+    ('💎', '💎'): 20,
+    ('🍀', '🍀'): 10,
+
+    # Scatter виграші (не залежать від позиції)
+    ('💰', '💰'): 200, # За 2 Scatter
+    ('💰', '💰', '💰'): 500, # За 3 Scatter
 }
-MAX_LEVEL = max(LEVEL_XP_REQUIREMENTS.keys())
 
-# --- Telegram Bot Handlers ---
-@dp.message(CommandStart("start")) # ВИПРАВЛЕНО: Використання Command фільтра
-async def start_command_handler(message: types.Message):
-    # Get user_id and username
-    user_id = str(message.from_user.id)
-    username = message.from_user.full_name or f"Гравець {user_id[-4:]}"
+# --- Функції для роботи з базою даних ---
 
-    # Initialize user in DB if not exists (or fetch from real DB)
-    if user_id not in users_db:
-        users_db[user_id] = {
-            "username": username,
-            "balance": 10000, # Starting bonus
-            "xp": 0,
-            "level": 1,
-            "next_level_xp": LEVEL_XP_REQUIREMENTS.get(2, 100),
-            "last_daily_bonus_claim": None,
-            "last_quick_bonus_claim": None,
-        }
-        print(f"New user initialized on /start: {user_id} - {username}")
+def get_db_connection():
+    """Створює та повертає з'єднання до бази даних PostgreSQL за URL."""
+    conn = None
+    if not DATABASE_URL:
+        logger.error("Attempted to connect to DB, but DATABASE_URL is not set.")
+        raise ValueError("DATABASE_URL is not configured.")
+    try:
+        url = urllib.parse.urlparse(DATABASE_URL)
+        conn = psycopg2.connect(
+            database=url.path[1:],
+            user=url.username,
+            password=url.password,
+            host=url.hostname,
+            port=url.port,
+            sslmode='require', 
+            keepalives=1, 
+            keepalives_idle=30,
+            keepalives_interval=10,
+            keepalives_count=5
+        )
+        logger.info("Successfully connected to PostgreSQL database.")
+        return conn
+    except psycopg2.Error as err:
+        logger.error(f"DB connection error: {err}")
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error during DB connection: {e}")
+        raise
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="🚀 Запустити Імперію Слота",
-                web_app=WebAppInfo(url=WEB_APP_FRONTEND_URL)
+def init_db():
+    """Ініціалізує таблиці та виконує міграції для бази даних PostgreSQL."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                username TEXT DEFAULT 'Unnamed Player',
+                balance INTEGER DEFAULT 10000,
+                xp INTEGER DEFAULT 0,
+                level INTEGER DEFAULT 1,
+                last_free_coins_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+                last_daily_bonus_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL,
+                last_quick_bonus_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL
             )
+        ''')
+        conn.commit()
+        logger.info("Table 'users' initialized or already exists.")
+
+        # Міграції для додавання нових стовпців (якщо вони ще не існують)
+        migrations_to_add = [
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT DEFAULT 'Unnamed Player';",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS xp INTEGER DEFAULT 0;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS level INTEGER DEFAULT 1;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_free_coins_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_daily_bonus_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL;",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_quick_bonus_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL;"
         ]
+
+        for mig_sql in migrations_to_add:
+            try:
+                cursor.execute(mig_sql)
+                conn.commit()
+                logger.info(f"Migration applied: {mig_sql.strip()}")
+            except psycopg2.ProgrammingError as e:
+                # Це нормально, якщо стовпець вже існує
+                logger.warning(f"Migration skipped/failed (might already exist or specific DB error): {e} -> {mig_sql.strip()}")
+                conn.rollback() # Rollback in case of error, but continue
+
+        logger.info("DB schema migration checked.")
+
+    except Exception as e:
+        logger.error(f"DB init/migration error: {e}")
+    finally:
+        if conn:
+            conn.close()
+
+def get_user_data(user_id: int | str) -> dict:
+    """Отримує всі дані користувача з БД. Створює, якщо не існує."""
+    # Convert user_id to int for DB operations consistently
+    user_id_int = int(user_id) 
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT username, balance, xp, level, last_free_coins_claim, last_daily_bonus_claim, last_quick_bonus_claim FROM users WHERE user_id = %s', 
+            (user_id_int,)
+        )
+        result = cursor.fetchone()
+        if result:
+            logger.info(f"Retrieved user {user_id_int} data: balance={result[1]}, xp={result[2]}, level={result[3]}")
+            # Ensure datetime objects are timezone-aware if they aren't already
+            last_free_coins_claim_db = result[4]
+            if last_free_coins_claim_db and last_free_coins_claim_db.tzinfo is None:
+                last_free_coins_claim_db = last_free_coins_claim_db.replace(tzinfo=timezone.utc)
+            
+            last_daily_bonus_claim_db = result[5]
+            if last_daily_bonus_claim_db and last_daily_bonus_claim_db.tzinfo is None:
+                last_daily_bonus_claim_db = last_daily_bonus_claim_db.replace(tzinfo=timezone.utc)
+
+            last_quick_bonus_claim_db = result[6]
+            if last_quick_bonus_claim_db and last_quick_bonus_claim_db.tzinfo is None:
+                last_quick_bonus_claim_db = last_quick_bonus_claim_db.replace(tzinfo=timezone.utc)
+
+            return {
+                'username': result[0],
+                'balance': result[1],
+                'xp': result[2],
+                'level': result[3],
+                'last_free_coins_claim': last_free_coins_claim_db,
+                'last_daily_bonus_claim': last_daily_bonus_claim_db,
+                'last_quick_bonus_claim': last_quick_bonus_claim_db
+            }
+        else:
+            # Initial creation of a new user
+            initial_balance = 10000
+            cursor.execute(
+                'INSERT INTO users (user_id, username, balance, xp, level, last_free_coins_claim, last_daily_bonus_claim, last_quick_bonus_claim) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)', 
+                (user_id_int, 'Unnamed Player', initial_balance, 0, 1, None, None, None)
+            )
+            conn.commit()
+            logger.info(f"Created new user {user_id_int} with initial balance {initial_balance}.")
+            return {
+                'username': 'Unnamed Player',
+                'balance': initial_balance,
+                'xp': 0,
+                'level': 1,
+                'last_free_coins_claim': None,
+                'last_daily_bonus_claim': None,
+                'last_quick_bonus_claim': None
+            }
+    except Exception as e:
+        logger.error(f"Error getting user data from PostgreSQL for {user_id_int}: {e}", exc_info=True)
+        # Return default/error data to prevent app crash
+        return {
+            'username': 'Error Player', 'balance': 0, 'xp': 0, 'level': 1, 
+            'last_free_coins_claim': None, 'last_daily_bonus_claim': None, 'last_quick_bonus_claim': None
+        }
+    finally:
+        if conn:
+            conn.close()
+
+def update_user_data(user_id: int | str, **kwargs):
+    """Оновлює дані користувача в базі даних PostgreSQL. Приймає ключові аргументи для оновлення."""
+    user_id_int = int(user_id)
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Fetch current data to preserve fields not explicitly updated
+        current_data_from_db = get_user_data(user_id_int) 
+        logger.info(f"Before update for {user_id_int}: {current_data_from_db.get('balance', 'N/A')} balance, {current_data_from_db.get('xp', 'N/A')} xp, {current_data_from_db.get('level', 'N/A')} level.")
+
+        update_fields_parts = []
+        update_values = []
+
+        # Populate fields_to_update with current DB values first, then override with kwargs
+        fields_to_update = {
+            'username': kwargs.get('username', current_data_from_db.get('username', 'Unnamed Player')),
+            'balance': kwargs.get('balance', current_data_from_db.get('balance', 0)),
+            'xp': kwargs.get('xp', current_data_from_db.get('xp', 0)),
+            'level': kwargs.get('level', current_data_from_db.get('level', 1)),
+            'last_free_coins_claim': kwargs.get('last_free_coins_claim', current_data_from_db.get('last_free_coins_claim')),
+            'last_daily_bonus_claim': kwargs.get('last_daily_bonus_claim', current_data_from_db.get('last_daily_bonus_claim')),
+            'last_quick_bonus_claim': kwargs.get('last_quick_bonus_claim', current_data_from_db.get('last_quick_bonus_claim'))
+        }
+        
+        # Ensure datetime objects are timezone-aware UTC before saving
+        for key in ['last_free_coins_claim', 'last_daily_bonus_claim', 'last_quick_bonus_claim']:
+            if fields_to_update[key] and fields_to_update[key].tzinfo is None:
+                fields_to_update[key] = fields_to_update[key].replace(tzinfo=timezone.utc)
+
+
+        for field, value in fields_to_update.items():
+            update_fields_parts.append(sql.SQL("{} = %s").format(sql.Identifier(field)))
+            update_values.append(value)
+        
+        if not update_fields_parts:
+            logger.info(f"No fields specified for update for user {user_id_int}.")
+            return
+
+        update_query = sql.SQL('''
+            UPDATE users SET {fields} WHERE user_id = %s
+        ''').format(fields=sql.SQL(', ').join(update_fields_parts))
+
+        update_values.append(user_id_int)
+
+        cursor.execute(update_query, update_values)
+        conn.commit()
+        logger.info(f"User {user_id_int} data updated. New balance: {fields_to_update.get('balance')}, XP: {fields_to_update.get('xp')}, Level: {fields_to_update.get('level')}.")
+    except Exception as e:
+        logger.error(f"Error updating user data in PostgreSQL for {user_id_int}: {e}", exc_info=True)
+    finally:
+        if conn:
+            conn.close()
+
+def check_win_conditions(symbols: List[str]) -> int:
+    """Перевіряє виграшні комбінації для 3-барабанного слота, враховуючи Wild та Scatter."""
+    winnings = 0
+    s1, s2, s3 = symbols
+    logger.info(f"Checking win conditions for symbols: {symbols}")
+
+    # 1. Перевірка Scatter символів (виплачуються незалежно від позиції)
+    scatter_count = symbols.count(SCATTER_SYMBOL)
+    if scatter_count == 3:
+        winnings = PAYOUTS.get((SCATTER_SYMBOL, SCATTER_SYMBOL, SCATTER_SYMBOL), 0)
+        logger.info(f"3 Scatters detected! Winnings: {winnings}")
+        return winnings
+    elif scatter_count == 2:
+        winnings = PAYOUTS.get((SCATTER_SYMBOL, SCATTER_SYMBOL), 0)
+        logger.info(f"2 Scatters detected! Winnings: {winnings}")
+        return winnings
+
+    # 2. Перевірка 3-х Wild символів (найвищий виграш)
+    if s1 == WILD_SYMBOL and s2 == WILD_SYMBOL and s3 == WILD_SYMBOL:
+        winnings = PAYOUTS.get(('⭐', '⭐', '⭐'), 0)
+        logger.info(f"3 Wilds detected! Winnings: {winnings}")
+        return winnings
+
+    # 3. Перевірка 3-х однакових символів (або з Wild як замінником)
+    for base_symbol in SYMBOLS:
+        match_count = 0
+        if s1 == base_symbol or s1 == WILD_SYMBOL:
+            match_count += 1
+        if s2 == base_symbol or s2 == WILD_SYMBOL:
+            match_count += 1
+        if s3 == base_symbol or s3 == WILD_SYMBOL:
+            match_count += 1
+        
+        if match_count == 3:
+            winnings = PAYOUTS.get(tuple([base_symbol] * 3), 0)
+            logger.info(f"3-of-a-kind (or with Wild) for {base_symbol} detected! Winnings: {winnings}")
+            return winnings
+    
+    # 4. Перевірка 2-х однакових символів (або з Wild як замінником) на перших 2 позиціях
+    # Це виплати за 2 символи, якщо третій не завершує 3-в-ряд і не є скаттером.
+    for base_symbol in SYMBOLS:
+        if (s1 == base_symbol or s1 == WILD_SYMBOL) and \
+           (s2 == base_symbol or s2 == WILD_SYMBOL):
+            # Перевіряємо, чи третій символ НЕ є цим же символом (тоді це вже 3-в-ряд)
+            # і НЕ є скаттером.
+            if not ((s3 == base_symbol or s3 == WILD_SYMBOL) or s3 == SCATTER_SYMBOL):
+                winnings = PAYOUTS.get((base_symbol, base_symbol), 0)
+                logger.info(f"2-of-a-kind (or with Wild) for {base_symbol} detected! Winnings: {winnings}")
+                return winnings
+    
+    logger.info(f"No winning combination found for symbols: {symbols}. Winnings: 0")
+    return winnings # Повертаємо 0, якщо немає виграшних комбінацій
+
+def spin_slot_logic(user_id: int | str) -> Dict:
+    user_data = get_user_data(user_id)
+    current_balance = user_data['balance']
+    current_xp = user_data['xp']
+    current_level = user_data['level']
+
+    logger.info(f"Spin requested for user {user_id}. Current balance: {current_balance}, XP: {current_xp}.")
+
+    if current_balance < BET_AMOUNT:
+        logger.info(f"User {user_id} tried to spin with insufficient balance: {current_balance}.")
+        return {'error': 'Недостатньо коштів для спіна!'}
+
+    result_symbols = [random.choice(ALL_REEL_SYMBOLS) for _ in range(3)]
+    winnings = check_win_conditions(result_symbols)
+
+    new_balance = current_balance - BET_AMOUNT + winnings
+    xp_gained = XP_PER_SPIN
+    if winnings > 0:
+        xp_gained += (XP_PER_SPIN * XP_PER_WIN_MULTIPLIER)
+        logger.info(f"User {user_id} won {winnings} with symbols {result_symbols}. Gained {xp_gained} XP. New balance would be {new_balance}.")
+    else:
+        logger.info(f"User {user_id} lost on spin. Symbols: {result_symbols}. Gained {xp_gained} XP. New balance would be {new_balance}.")
+    
+    new_xp = current_xp + xp_gained
+    new_level = get_level_from_xp(new_xp)
+
+    # Check for level up after calculating new XP
+    level_up_message = ""
+    if new_level > current_level:
+        level_up_message = f" 🎉 НОВИЙ РІВЕНЬ: {new_level}! 🎉"
+
+    update_user_data(user_id, balance=new_balance, xp=new_xp, level=new_level)
+
+    final_user_data = get_user_data(user_id) # Fetch updated data to ensure consistency
+    
+    return {
+        'symbols': result_symbols,
+        'winnings': winnings,
+        'balance': final_user_data['balance'],
+        'xp': final_user_data['xp'],
+        'level': final_user_data['level'],
+        'next_level_xp': get_xp_for_next_level(final_user_data['level']),
+        'message': level_up_message # Include level up message
+    }
+
+def coin_flip_game_logic(user_id: int | str, choice: str) -> Dict:
+    """
+    Логіка гри "Підкидання монетки".
+    :param user_id: ID користувача.
+    :param choice: Вибір користувача ('heads' або 'tails').
+    :return: Результат гри (виграш, новий баланс тощо).
+    """
+    user_data = get_user_data(user_id)
+    current_balance = user_data['balance']
+    current_xp = user_data['xp']
+    current_level = user_data['level']
+
+    logger.info(f"Coin flip requested for user {user_id}. Choice: {choice}. Current balance: {current_balance}, XP: {current_xp}.")
+
+    if current_balance < COIN_FLIP_BET_AMOUNT:
+        logger.info(f"User {user_id} tried to coin flip with insufficient balance: {current_balance}.")
+        return {'error': 'Недостатньо коштів для підкидання монетки!'}
+
+    coin_result = random.choice(['heads', 'tails'])
+    winnings = 0
+    message = ""
+
+    new_balance = current_balance - COIN_FLIP_BET_AMOUNT # Спершу віднімаємо ставку
+    xp_gained = XP_PER_COIN_FLIP
+
+    if choice == coin_result:
+        winnings = COIN_FLIP_BET_AMOUNT * 2 # Подвоюємо ставку
+        new_balance += winnings # Додаємо виграш
+        message = f"🎉 Вітаємо! Монета показала {coin_result == 'heads' and 'Орла' or 'Решку'}! Ви виграли {winnings} фантиків!"
+        xp_gained += (XP_PER_COIN_FLIP * XP_PER_WIN_MULTIPLIER) # Додатковий XP за виграш
+        logger.info(f"User {user_id} won coin flip. Result: {coin_result}. Winnings: {winnings}. Gained {xp_gained} XP. New balance would be {new_balance}.")
+    else:
+        message = f"😢 На жаль, монета показала {coin_result == 'heads' and 'Орла' or 'Решку'}. Спробуйте ще раз!"
+        logger.info(f"User {user_id} lost coin flip. Result: {coin_result}. Gained {xp_gained} XP. New balance would be {new_balance}.")
+    
+    new_xp = current_xp + xp_gained
+    new_level = get_level_from_xp(new_xp)
+
+    # Check for level up after calculating new XP
+    level_up_message = ""
+    if new_level > current_level:
+        level_up_message = f" 🎉 НОВИЙ РІВЕНЬ: {new_level}! 🎉"
+
+    update_user_data(user_id, balance=new_balance, xp=new_xp, level=new_level)
+
+    final_user_data = get_user_data(user_id) # Fetch updated data for consistency
+
+    return {
+        'result': coin_result,
+        'winnings': winnings,
+        'balance': final_user_data['balance'],
+        'message': message + level_up_message, # Concatenate messages
+        'xp': final_user_data['xp'],
+        'level': final_user_data['level'],
+        'next_level_xp': get_xp_for_next_level(final_user_data['level'])
+    }
+
+
+# --- Обробники Telegram-бота (aiogram v3 синтаксис) ---
+
+@dp.message(CommandStart())
+async def send_welcome(message: Message):
+    user_id = message.from_user.id
+    init_db() # Ensure DB is initialized on first user interaction
+    
+    user_data = get_user_data(user_id) # Get user data to ensure record exists
+    logger.info(f"CommandStart: User {user_id} fetched data: {user_data}")
+    
+    # Update username from Telegram data if available
+    telegram_username = message.from_user.username
+    telegram_first_name = message.from_user.first_name
+    
+    updated_username = user_data['username']
+    # Prioritize Telegram username, then first name, only if current is default
+    if telegram_username and user_data['username'] != telegram_username:
+        update_user_data(user_id, username=telegram_username)
+        updated_username = telegram_username
+    elif telegram_first_name and user_data['username'] == 'Unnamed Player': # Only update if it's default
+        update_user_data(user_id, username=telegram_first_name)
+        updated_username = telegram_first_name
+    
+    # Re-fetch user data to ensure we have the very latest values, including username change
+    user_data = get_user_data(user_id) 
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🎰 Відкрити Слот-Казино 🎰", web_app=WebAppInfo(url=WEB_APP_FRONTEND_URL))]
     ])
-    await message.answer(
-        "Привіт! Ласкаво просимо до Імперії Слота! Натисніть кнопку нижче, щоб запустити Web App.",
+
+    await message.reply(
+        f"Привіт, {user_data['username']}!\n" # Use updated username
+        f"Ласкаво просимо до віртуального Слот-Казино!\n"
+        f"Ваш поточний баланс: {user_data['balance']} фантиків.\n"
+        f"Натисніть кнопку нижче, щоб почати грати!",
         reply_markup=keyboard
     )
+    logger.info(f"User {user_id} ({user_data['username']}) started the bot. Balance: {user_data['balance']}.")
 
-# --- FastAPI API Endpoints ---
-class UserData(BaseModel):
-    user_id: str
-    username: str = "Unnamed Player"
 
-class SpinData(BaseModel):
-    user_id: str
+@dp.message(Command("add_balance"))
+async def add_balance_command(message: Message):
+    user_id = message.from_user.id
+    
+    if ADMIN_ID is None or user_id != ADMIN_ID:
+        await message.reply("У вас немає дозволу на використання цієї команди.")
+        logger.warning(f"User {user_id} tried to use /add_balance without admin privileges.")
+        return
 
-class CoinFlipData(BaseModel):
-    user_id: str
+    args = message.text.split()
+    if len(args) != 2:
+        await message.reply("Будь ласка, вкажіть суму для додавання. Використання: `/add_balance <сума>`")
+        return
+
+    try:
+        amount = int(args[1])
+        if amount <= 0:
+            await message.reply("Сума має бути позитивним числом.")
+            return
+    except ValueError:
+        await message.reply("Невірна сума. Будь ласка, введіть число.")
+        return
+
+    current_user_data = get_user_data(user_id)
+    new_balance = current_user_data['balance'] + amount
+    update_user_data(user_id, balance=new_balance)
+    updated_user_data = get_user_data(user_id) # Re-fetch to confirm update
+
+    await message.reply(f"🎉 {amount} фантиків успішно додано! Ваш новий баланс: {updated_user_data['balance']} фантиків. 🎉")
+    logger.info(f"Admin {user_id} added {amount} to their balance. New balance: {updated_user_data['balance']}.")
+
+
+@dp.message(Command("get_coins"))
+async def get_free_coins_command(message: Message):
+    user_id = message.from_user.id
+    
+    # Check for extra arguments (this command should not accept them)
+    if len(message.text.split()) > 1:
+        await message.reply("Ця команда не приймає аргументів. Використання: `/get_coins`")
+        logger.warning(f"User {user_id} used /get_coins with unexpected arguments: {message.text}")
+        return
+
+    user_data = get_user_data(user_id)
+    last_claim_time = user_data['last_free_coins_claim']
+
+    current_time = datetime.now(timezone.utc) # Use timezone.utc for consistency
+
+    cooldown_duration = timedelta(hours=COOLDOWN_HOURS)
+
+    if last_claim_time and (current_time - last_claim_time) < cooldown_duration:
+        time_left = cooldown_duration - (current_time - last_claim_time)
+        hours = int(time_left.total_seconds() // 3600)
+        minutes = int((time_left.total_seconds() % 3600) // 60)
+        await message.reply(
+            f"💰 Ви вже отримували фантики нещодавно. Спробуйте знову через {hours} год {minutes} хв."
+        )
+        logger.info(f"User {user_id} tried to claim free coins but is on cooldown.")
+    else:
+        new_balance = user_data['balance'] + FREE_COINS_AMOUNT
+        update_user_data(user_id, balance=new_balance, last_free_coins_claim=current_time)
+        updated_user_data = get_user_data(user_id) # Re-fetch to confirm update
+        await message.reply(
+            f"🎉 Вітаємо! Ви отримали {FREE_COINS_AMOUNT} безкоштовних фантиків!\n"
+            f"Ваш новий баланс: {updated_user_data['balance']} фантиків. 🎉"
+        )
+        logger.info(f"User {user_id} claimed {FREE_COINS_AMOUNT} free coins. New balance: {updated_user_data['balance']}.")
+
+
+# Обробник для даних, надісланих з Web App
+@dp.message(lambda msg: msg.web_app_data)
+async def web_app_data_handler(message: Message):
+    user_id = message.from_user.id
+    data_from_webapp = message.web_app_data.data
+    
+    logger.info(f"Received data from WebApp for user {user_id}: {data_from_webapp}")
+
+    # For debugging, you can enable specific log types to be sent to chat
+    if data_from_webapp.startswith('JS_VERY_FIRST_LOG:'):
+        await message.answer(f"✅ WebApp Core Log: {data_from_webapp.replace('JS_VERY_FIRST_LOG:', '').strip()}")
+    elif data_from_webapp.startswith('JS_LOG:'):
+        # Only log to server console, don't spam user chat
+        logger.info(f"WebApp JS_LOG for {user_id}: {data_from_webapp.replace('JS_LOG:', '').strip()}")
+    elif data_from_webapp.startswith('JS_DEBUG:'):
+        # Only log to server console
+        logger.debug(f"WebApp JS_DEBUG for {user_id}: {data_from_webapp.replace('JS_DEBUG:', '').strip()}")
+    elif data_from_webapp.startswith('JS_WARN:'):
+        logger.warning(f"WebApp JS_WARN for {user_id}: {data_from_webapp.replace('JS_WARN:', '').strip()}")
+    elif data_from_webapp.startswith('JS_ERROR:'):
+        await message.answer(f"❌ WebApp Error: {data_from_webapp.replace('JS_ERROR:', '').strip()}")
+    else:
+        pass # For unknown data types or other unhandled messages
+
+
+# --- FastAPI API Endpoints (Pydantic models for request bodies) ---
+class UserRequest(BaseModel):
+    user_id: int | str
+    username: Optional[str] = None
+
+class SpinRequest(BaseModel):
+    user_id: int | str
+
+class CoinFlipRequest(BaseModel):
+    user_id: int | str
     choice: str # 'heads' or 'tails'
 
-class BlackjackAction(BaseModel):
-    user_id: str
+class ClaimBonusRequest(BaseModel):
+    user_id: int | str
+
+class BlackjackActionRequest(BaseModel):
+    user_id: int | str
     room_id: str
     action: str # 'bet', 'hit', 'stand'
     amount: Optional[int] = None # For 'bet' action
 
 @app.post("/api/get_balance")
-async def get_balance(user_data: UserData):
-    user_id = user_data.user_id
-    username = user_data.username
+async def api_get_balance(user_req: UserRequest):
+    user_id = user_req.user_id
+    username_from_frontend = user_req.username
 
-    if user_id not in users_db:
-        # This block might be redundant if start_command_handler always initializes,
-        # but good for direct access or testing.
-        users_db[user_id] = {
-            "username": username,
-            "balance": 10000, # Starting bonus
-            "xp": 0,
-            "level": 1,
-            "next_level_xp": LEVEL_XP_REQUIREMENTS.get(2, 100),
-            "last_daily_bonus_claim": None,
-            "last_quick_bonus_claim": None,
-        }
-        print(f"New user initialized via get_balance: {user_id} - {username}")
-    else:
-        # Update username if it changed (e.g., user set a Telegram username later)
-        users_db[user_id]["username"] = username
-        print(f"User {user_id} ({username}) data retrieved.")
+    user_data = get_user_data(user_id) # Fetch current data from DB
+    
+    # Update username in DB if frontend provides a new one and it's different/better
+    if username_from_frontend and user_data['username'] != username_from_frontend:
+        # Avoid updating if frontend sends default 'Unnamed Player' when DB has better
+        if username_from_frontend != 'Unnamed Player' or user_data['username'] == 'Unnamed Player':
+            update_user_data(user_id, username=username_from_frontend)
+            user_data['username'] = username_from_frontend # Update response to reflect change
 
-    user = users_db[user_id]
     return {
-        "user_id": user_id,
-        "username": user["username"],
-        "balance": user["balance"],
-        "xp": user["xp"],
-        "level": user["level"],
-        "next_level_xp": user["next_level_xp"],
-        "last_daily_bonus_claim": user["last_daily_bonus_claim"].isoformat() if user["last_daily_bonus_claim"] else None,
-        "last_quick_bonus_claim": user["last_quick_bonus_claim"].isoformat() if user["last_quick_bonus_claim"] else None,
+        'username': user_data['username'],
+        'balance': user_data['balance'],
+        'xp': user_data['xp'],
+        'level': user_data['level'],
+        'next_level_xp': get_xp_for_next_level(user_data['level']),
+        'last_daily_bonus_claim': user_data['last_daily_bonus_claim'].isoformat() if user_data['last_daily_bonus_claim'] else None,
+        'last_quick_bonus_claim': user_data['last_quick_bonus_claim'].isoformat() if user_data['last_quick_bonus_claim'] else None
     }
 
 @app.post("/api/spin")
-async def spin_slot(spin_data: SpinData):
-    user_id = spin_data.user_id
-    if user_id not in users_db:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    user = users_db[user_id]
-    bet_amount = 100 # Fixed bet amount for slots
-
-    if user["balance"] < bet_amount:
-        raise HTTPException(status_code=400, detail="Not enough balance")
-
-    user["balance"] -= bet_amount
-    symbols = [random.choice(['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀', '⭐', '💰']) for _ in range(3)]
-
-    winnings = 0
-    message = "Спробуйте ще раз!"
-
-    # Simplified winning logic
-    if symbols[0] == symbols[1] == symbols[2]:
-        if symbols[0] == '⭐': # Triple Wild
-            winnings = bet_amount * 20
-            message = "🤯 МЕГА-ВИГРАШ! ТРИ ЗІРКИ! 🤯"
-        elif symbols[0] == '💰': # Triple Scatter
-            winnings = bet_amount * 15
-            message = "💰 ДЖЕКПОТ! ТРИ МІШКИ! 💰"
-        elif symbols[0] == '💎': # Triple Diamond
-            winnings = bet_amount * 10
-            message = "💎 ВЕЛИКИЙ ВИГРАШ! ТРИ ДІАМАНТИ! 💎"
-        else:
-            winnings = bet_amount * 5
-            message = f"🎉 ТРИ {symbols[0]}! Виграш! 🎉"
-    elif symbols[0] == symbols[1] or symbols[1] == symbols[2]:
-        winnings = bet_amount * 1.5
-        message = "✨ Два однакових! ✨"
-    elif '⭐' in symbols: # Wild symbol anywhere
-        winnings = bet_amount * 2
-        message = "⭐ WILD! +2X!"
-
-    user["balance"] += winnings
-    user["xp"] += 10 # Gain XP for each spin
-
-    # Level Up Check
-    while user["level"] < MAX_LEVEL and user["xp"] >= user["next_level_xp"]:
-        user["level"] += 1
-        user["xp"] = user["xp"] - user["next_level_xp"] # Carry over excess XP
-        user["next_level_xp"] = LEVEL_XP_REQUIREMENTS.get(user["level"] + 1, user["next_level_xp"] * 2) # Simple progression or double
-        message += f" 🎉 НОВИЙ РІВЕНЬ: {user['level']}! 🎉"
-
-    return {"symbols": symbols, "winnings": winnings, "balance": user["balance"], "xp": user["xp"], "level": user["level"], "next_level_xp": user["next_level_xp"], "message": message}
+async def api_spin(spin_req: SpinRequest):
+    user_id = spin_req.user_id
+    
+    result = spin_slot_logic(user_id)
+    if 'error' in result:
+        raise HTTPException(status_code=400, detail=result['error'])
+    
+    return result
 
 @app.post("/api/coin_flip")
-async def coin_flip(flip_data: CoinFlipData):
-    user_id = flip_data.user_id
-    choice = flip_data.choice # 'heads' or 'tails'
+async def api_coin_flip(flip_req: CoinFlipRequest):
+    user_id = flip_req.user_id
+    choice = flip_req.choice
 
-    if user_id not in users_db:
-        raise HTTPException(status_code=404, detail="User not found")
+    if choice not in ['heads', 'tails']:
+        raise HTTPException(status_code=400, detail="Invalid choice. Must be 'heads' or 'tails'.")
 
-    user = users_db[user_id]
-    bet_amount = 50 # Fixed bet for coin flip
+    result = coin_flip_game_logic(user_id, choice)
+    if 'error' in result:
+        raise HTTPException(status_code=400, detail=result['error'])
+    
+    return result
 
-    if user["balance"] < bet_amount:
-        raise HTTPException(status_code=400, detail="Not enough balance")
-
-    user["balance"] -= bet_amount
-
-    result = random.choice(['heads', 'tails'])
-    winnings = 0
-    message = ""
-
-    if result == choice:
-        winnings = bet_amount * 2
-        user["balance"] += winnings
-        message = f"🎉 Вітаємо! Випало {result == 'heads' and 'ОРЕЛ' or 'РЕШКА'}! Ви виграли {winnings} фантиків!"
-    else:
-        message = f"😢 На жаль! Випало {result == 'heads' and 'ОРЕЛ' or 'РЕШКА'}. Спробуйте ще раз!"
-
-    user["xp"] += 5 # XP for coin flip
-
-    # Level Up Check (simplified, can be moved to a helper)
-    while user["level"] < MAX_LEVEL and user["xp"] >= user["next_level_xp"]:
-        user["level"] += 1
-        user["xp"] = user["xp"] - user["next_level_xp"]
-        user["next_level_xp"] = LEVEL_XP_REQUIREMENTS.get(user["level"] + 1, user["next_level_xp"] * 2)
-        message += f" 🎉 НОВИЙ РІВЕНЬ: {user['level']}! 🎉"
-
-    return {"result": result, "winnings": winnings, "balance": user["balance"], "xp": user["xp"], "level": user["level"], "next_level_xp": user["next_level_xp"], "message": message}
 
 @app.post("/api/claim_daily_bonus")
-async def claim_daily_bonus(user_data: UserData):
-    user_id = user_data.user_id
-    if user_id not in users_db:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    user = users_db[user_id]
-    now = datetime.now()
+async def api_claim_daily_bonus(claim_req: ClaimBonusRequest):
+    user_id = claim_req.user_id
     
-    # Define time zones to avoid issues
-    # Using a simple comparison; in production, consider pytz for robust timezone handling
-    
-    if user["last_daily_bonus_claim"]:
-        last_claim = user["last_daily_bonus_claim"]
-        time_since_last_claim = now - last_claim
-        if time_since_last_claim < timedelta(hours=24):
-            remaining_time = timedelta(hours=24) - time_since_last_claim
-            hours, remainder = divmod(remaining_time.total_seconds(), 3600)
-            minutes, seconds = divmod(remainder, 60)
-            raise HTTPException(status_code=400, detail=f"Бонус вже отримано. Спробуйте через {int(hours)} год {int(minutes)} хв.")
+    user_data = get_user_data(user_id)
+    last_claim_time = user_data['last_daily_bonus_claim']
 
-    bonus_amount = 500
-    user["balance"] += bonus_amount
-    user["last_daily_bonus_claim"] = now
-    user["xp"] += 20 # XP for claiming bonus
+    current_time = datetime.now(timezone.utc)
+    cooldown_duration = timedelta(hours=DAILY_BONUS_COOLDOWN_HOURS)
 
-    # Level Up Check
-    while user["level"] < MAX_LEVEL and user["xp"] >= user["next_level_xp"]:
-        user["level"] += 1
-        user["xp"] = user["xp"] - user["next_level_xp"]
-        user["next_level_xp"] = LEVEL_XP_REQUIREMENTS.get(user["level"] + 1, user["next_level_xp"] * 2)
+    if last_claim_time and (current_time - last_claim_time) < cooldown_duration:
+        time_left = cooldown_duration - (current_time - last_claim_time)
+        hours = int(time_left.total_seconds() // 3600)
+        minutes = int((time_left.total_seconds() % 3600) // 60)
+        seconds = int(time_left.total_seconds() % 60)
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Будь ласка, зачекайте {hours:02d}:{minutes:02d}:{seconds:02d} до наступного бонусу."
+        )
+    else:
+        new_balance = user_data['balance'] + DAILY_BONUS_AMOUNT
+        new_xp = user_data['xp'] + 20 # XP for claiming bonus
+        new_level = get_level_from_xp(new_xp)
 
-    return {"amount": bonus_amount, "balance": user["balance"], "xp": user["xp"], "level": user["level"], "next_level_bonus_xp": user["next_level_xp"]} # Fixed typo here: next_level_bonus_xp -> next_level_xp
+        update_user_data(user_id, balance=new_balance, last_daily_bonus_claim=current_time, xp=new_xp, level=new_level)
+        updated_user_data = get_user_data(user_id) # Fetch updated data for response consistency
+        
+        return {
+            'message': 'Бонус успішно отримано!', 
+            'amount': DAILY_BONUS_AMOUNT,
+            'balance': updated_user_data['balance'],
+            'xp': updated_user_data['xp'],
+            'level': updated_user_data['level'],
+            'next_level_xp': get_xp_for_next_level(updated_user_data['level'])
+        }
 
 @app.post("/api/claim_quick_bonus")
-async def claim_quick_bonus(user_data: UserData):
-    user_id = user_data.user_id
-    if user_id not in users_db:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    user = users_db[user_id]
-    now = datetime.now()
+async def api_claim_quick_bonus(claim_req: ClaimBonusRequest):
+    user_id = claim_req.user_id
     
-    if user["last_quick_bonus_claim"]:
-        last_claim = user["last_quick_bonus_claim"]
-        time_since_last_claim = now - last_claim
-        if time_since_last_claim < timedelta(minutes=15):
-            remaining_time = timedelta(minutes=15) - time_since_last_claim
-            minutes, seconds = divmod(remaining_time.total_seconds(), 60)
-            raise HTTPException(status_code=400, detail=f"Бонус вже отримано. Спробуйте через {int(minutes)} хв {int(seconds)} сек.")
+    user_data = get_user_data(user_id)
+    last_claim_time = user_data['last_quick_bonus_claim']
 
-    bonus_amount = 100
-    user["balance"] += bonus_amount
-    user["last_quick_bonus_claim"] = now
-    user["xp"] += 5 # XP for claiming bonus
+    current_time = datetime.now(timezone.utc)
+    cooldown_duration = timedelta(minutes=QUICK_BONUS_COOLDOWN_MINUTES)
 
-    # Level Up Check
-    while user["level"] < MAX_LEVEL and user["xp"] >= user["next_level_xp"]:
-        user["level"] += 1
-        user["xp"] = user["xp"] - user["next_level_xp"]
-        user["next_level_xp"] = LEVEL_XP_REQUIREMENTS.get(user["level"] + 1, user["next_level_xp"] * 2)
+    if last_claim_time and (current_time - last_claim_time) < cooldown_duration:
+        time_left = cooldown_duration - (current_time - last_claim_time)
+        minutes = int(time_left.total_seconds() // 60)
+        seconds = int(time_left.total_seconds() % 60)
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Будь ласка, зачекайте {minutes:02d}:{seconds:02d} до наступного швидкого бонусу."
+        )
+    else:
+        new_balance = user_data['balance'] + QUICK_BONUS_AMOUNT
+        new_xp = user_data['xp'] + 5 # XP for claiming bonus
+        new_level = get_level_from_xp(new_xp)
 
-    return {"amount": bonus_amount, "balance": user["balance"], "xp": user["xp"], "level": user["level"], "next_level_xp": user["next_level_xp"]}
+        update_user_data(user_id, balance=new_balance, last_quick_bonus_claim=current_time, xp=new_xp, level=new_level)
+        updated_user_data = get_user_data(user_id) # Fetch updated data for response consistency
 
+        return {
+            'message': 'Швидкий бонус успішно отримано!', 
+            'amount': QUICK_BONUS_AMOUNT,
+            'balance': updated_user_data['balance'],
+            'xp': updated_user_data['xp'],
+            'level': updated_user_data['level'],
+            'next_level_xp': get_xp_for_next_level(updated_user_data['level'])
+        }
 
 @app.post("/api/get_leaderboard")
-async def get_leaderboard():
-    # Convert users_db to a list and sort for leaderboard
-    leaderboard_entries = []
-    for user_id, data in users_db.items():
-        leaderboard_entries.append({
-            "user_id": user_id,
-            "username": data["username"],
-            "balance": data["balance"], # Keep balance for sorting purposes
-            "xp": data["xp"],
-            "level": data["level"]
-        })
-    
-    # Sort by level (descending), then by XP (descending)
-    leaderboard_entries.sort(key=lambda x: (x["level"], x["xp"]), reverse=True)
-    
-    # Return top 100 or fewer if less than 100 users
-    return {"leaderboard": leaderboard_entries[:100]}
+async def api_get_leaderboard():
+    """API-ендпоінт для отримання даних дошки лідерів."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Отримуємо дані всіх користувачів, відсортовані за рівнем (спаданням), потім за XP (спаданням)
+        cursor.execute(
+            'SELECT user_id, username, balance, xp, level FROM users ORDER BY level DESC, xp DESC LIMIT 100;'
+        )
+        leaderboard_raw = cursor.fetchall()
 
+        leaderboard_entries = []
+        for row in leaderboard_raw:
+            leaderboard_entries.append({
+                "user_id": row[0],
+                "username": row[1],
+                "balance": row[2],
+                "xp": row[3],
+                "level": row[4]
+            })
+        
+        return {"leaderboard": leaderboard_entries}
+    except Exception as e:
+        logger.error(f"Error fetching leaderboard from PostgreSQL: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error fetching leaderboard data.")
+    finally:
+        if conn:
+            conn.close()
 
-# --- Blackjack Game Logic (Server-side) ---
-
+# --- Blackjack Game Logic (Server-side, as previously provided, using int for user_id) ---
 class Card:
     def __init__(self, suit: str, rank: str):
         self.suit = suit
@@ -373,24 +865,23 @@ class Hand:
     
     def to_json(self, hide_first: bool = False) -> List[str]:
         if hide_first and self.cards:
-            # For Blackjack, hide the second card of the dealer, not the first
             if len(self.cards) > 1:
                 return [str(self.cards[0]), "Hidden"]
-            else: # If only one card, still show it
+            else: 
                 return [str(self.cards[0])]
         return [str(card) for card in self.cards]
 
 
 class BlackjackPlayer:
-    def __init__(self, user_id: str, username: str, websocket: WebSocket):
+    def __init__(self, user_id: int, username: str, websocket: WebSocket): # user_id as int
         self.user_id = user_id
         self.username = username
         self.websocket = websocket
         self.hand = Hand()
         self.bet = 0
         self.is_ready = False
-        self.is_playing = True # True if still in round (not busted/stood)
-        self.has_bet = False # Flag to ensure player has bet before starting
+        self.is_playing = True 
+        self.has_bet = False 
 
     def reset_for_round(self):
         self.hand = Hand()
@@ -402,17 +893,17 @@ class BlackjackPlayer:
 class BlackjackRoom:
     def __init__(self, room_id: str):
         self.room_id = room_id
-        self.players: Dict[str, BlackjackPlayer] = {} # user_id: BlackjackPlayer
+        self.players: Dict[int, BlackjackPlayer] = {} # user_id: BlackjackPlayer
         self.status = "waiting" # waiting, starting_timer, betting, playing, dealer_turn, round_end
         self.deck = Deck()
         self.dealer_hand = Hand()
         self.current_turn_index = 0
         self.min_players = 2
         self.max_players = 5
-        self.game_start_timer: Optional[asyncio.Task] = None # Stores the asyncio task for the timer
-        self.timer_countdown: int = 0 # Current countdown value
+        self.game_start_timer: Optional[asyncio.Task] = None 
+        self.timer_countdown: int = 0 
 
-    async def add_player(self, user_id: str, username: str, websocket: WebSocket):
+    async def add_player(self, user_id: int, username: str, websocket: WebSocket):
         if len(self.players) >= self.max_players:
             return False, "Room is full."
         if user_id in self.players:
@@ -421,28 +912,24 @@ class BlackjackRoom:
         player = BlackjackPlayer(user_id, username, websocket)
         self.players[user_id] = player
         
-        # Notify existing players
         await self.send_room_state_to_all()
         return True, "Joined room successfully."
 
-    async def remove_player(self, user_id: str):
+    async def remove_player(self, user_id: int):
         if user_id in self.players:
             del self.players[user_id]
             print(f"Player {user_id} removed from room {self.room_id}")
             if not self.players:
-                # If room empty, cancel timer and remove room
                 if self.game_start_timer and not self.game_start_timer.done():
                     self.game_start_timer.cancel()
                 del blackjack_room_manager.rooms[self.room_id]
                 print(f"Room {self.room_id} is empty and removed.")
             else:
-                # If game was in progress and current player left, advance turn
-                # This logic might need refinement for complex multi-player states
                 if self.status == "playing":
                      active_players_after_removal = [p for p in self.players.values() if p.is_playing]
-                     if not active_players_after_removal: # All players done, go to dealer
+                     if not active_players_after_removal:
                          await self.next_turn()
-                     elif self.current_turn_index >= len(active_players_after_removal): # Index out of bounds, reset
+                     elif self.current_turn_index >= len(active_players_after_removal):
                          self.current_turn_index = 0
                      
                 await self.send_room_state_to_all()
@@ -453,20 +940,17 @@ class BlackjackRoom:
         state = self.get_current_state()
         for player in self.players.values():
             try:
-                # Customize state for each player (e.g., hide other player's hidden cards in poker, but not blackjack)
                 player_state = state.copy()
-                # If not dealer's turn and dealer has 2 cards, hide the second one for players
                 if self.status not in ["dealer_turn", "round_end"] and len(self.dealer_hand.cards) > 1:
                     player_state["dealer_hand"] = [str(self.dealer_hand.cards[0]), "Hidden"]
-                    player_state["dealer_score"] = self.dealer_hand.cards[0].value() # Show only first card's value
-                else: # Reveal dealer's full hand and score
+                    player_state["dealer_score"] = self.dealer_hand.cards[0].value() 
+                else: 
                     player_state["dealer_hand"] = self.dealer_hand.to_json()
                     player_state["dealer_score"] = self.dealer_hand.value
 
                 await player.websocket.send_json(player_state)
             except Exception as e:
                 print(f"Error sending state to {player.user_id}: {e}")
-                # Consider disconnecting player if send fails
 
     def get_current_state(self):
         players_data = []
@@ -482,7 +966,6 @@ class BlackjackRoom:
                 "has_bet": p.has_bet
             })
         
-        # Determine current player's user_id
         current_player_id = None
         if self.status == "playing":
             active_players = [p for p in self.players.values() if p.is_playing]
@@ -493,17 +976,17 @@ class BlackjackRoom:
         return {
             "room_id": self.room_id,
             "status": self.status,
-            "dealer_hand": [], # Placeholder, will be filled in send_room_state_to_all based on visibility
-            "dealer_score": 0, # Placeholder
+            "dealer_hand": [], 
+            "dealer_score": 0, 
             "players": players_data,
             "current_player_turn": current_player_id,
             "player_count": len(self.players),
             "min_players": self.min_players,
             "max_players": self.max_players,
-            "timer": self.timer_countdown # Send current timer value
+            "timer": self.timer_countdown 
         }
 
-    async def handle_bet(self, user_id: str, amount: int):
+    async def handle_bet(self, user_id: int, amount: int): # user_id as int
         player = self.players.get(user_id)
         if not player:
             return
@@ -512,8 +995,8 @@ class BlackjackRoom:
             await player.websocket.send_json({"type": "error", "message": "Ставки приймаються лише на етапі 'betting'."})
             return
 
-        user_in_db = users_db.get(user_id)
-        if not user_in_db or user_in_db["balance"] < amount:
+        user_data = get_user_data(user_id) # Fetch from DB
+        if not user_data or user_data["balance"] < amount:
             await player.websocket.send_json({"type": "error", "message": "Недостатньо фантиків для ставки."})
             return
         if amount <= 0:
@@ -524,20 +1007,20 @@ class BlackjackRoom:
             return
 
         player.bet = amount
-        user_in_db["balance"] -= amount # Deduct bet from balance
+        new_balance = user_data["balance"] - amount
+        update_user_data(user_id, balance=new_balance) # Update DB
         player.has_bet = True
         print(f"Player {user_id} bet {amount}")
 
-        # Check if all players have bet that are connected
         all_bet = all(p.has_bet for p in self.players.values())
         if all_bet and len(self.players) >= self.min_players:
             self.status = "playing"
             await self.start_round()
         else:
-            await self.send_room_state_to_all() # Update all clients to show who has bet
+            await self.send_room_state_to_all() 
 
 
-    async def handle_action(self, user_id: str, action: str):
+    async def handle_action(self, user_id: int, action: str): # user_id as int
         player = self.players.get(user_id)
         if not player or not player.is_playing:
             await player.websocket.send_json({"type": "error", "message": "Зараз не ваш хід або ви не граєте."})
@@ -550,13 +1033,12 @@ class BlackjackRoom:
 
         if action == "hit":
             player.hand.add_card(self.deck.deal_card())
-            await self.send_room_state_to_all() # Send update after card is added
+            await self.send_room_state_to_all()
             if player.hand.value > 21:
-                player.is_playing = False # Busted
+                player.is_playing = False 
                 await player.websocket.send_json({"type": "game_message", "message": "Ви перебрали! 💥"})
-                await asyncio.sleep(1) # Small delay for message to be seen
+                await asyncio.sleep(1)
                 await self.next_turn()
-            # If not busted, player can still hit, so don't advance turn yet
         elif action == "stand":
             player.is_playing = False
             await player.websocket.send_json({"type": "game_message", "message": "Ви зупинились."})
@@ -569,68 +1051,61 @@ class BlackjackRoom:
         active_players = [p for p in self.players.values() if p.is_playing]
         if not active_players:
             return None
-        # Ensure current_turn_index wraps around
         return active_players[self.current_turn_index % len(active_players)]
 
     async def next_turn(self):
         self.current_turn_index += 1
         active_players = [p for p in self.players.values() if p.is_playing]
 
-        if not active_players: # All players finished their turns (stood or busted), dealer's turn
+        if not active_players: 
             self.status = "dealer_turn"
-            await self.send_room_state_to_all() # Show dealer's second card
-            await asyncio.sleep(1) # Pause before dealer plays
+            await self.send_room_state_to_all() 
+            await asyncio.sleep(1) 
             await self.dealer_play()
         else:
-            await self.send_room_state_to_all() # Update whose turn it is
+            await self.send_room_state_to_all() 
 
     async def start_round(self):
         print(f"Room {self.room_id}: Starting new round.")
-        self.deck = Deck() # New shuffled deck for each round
+        self.deck = Deck() 
         self.dealer_hand = Hand()
-        self.current_turn_index = 0 # Reset turn index for new round
+        self.current_turn_index = 0 
         
-        # Reset players and deal initial cards
         for player in self.players.values():
-            player.reset_for_round() # Reset player state from previous round
-            player.hand.add_card(self.deck.deal_card()) # First card
-            player.hand.add_card(self.deck.deal_card()) # Second card
+            player.reset_for_round() 
+            player.hand.add_card(self.deck.deal_card()) 
+            player.hand.add_card(self.deck.deal_card()) 
         
-        self.dealer_hand.add_card(self.deck.deal_card()) # Dealer's first card (visible)
-        self.dealer_hand.add_card(self.deck.deal_card()) # Dealer's second card (hidden initially)
+        self.dealer_hand.add_card(self.deck.deal_card()) 
+        self.dealer_hand.add_card(self.deck.deal_card()) 
 
         self.status = "playing"
-        await self.send_room_state_to_all() # Send initial hands
+        await self.send_room_state_to_all() 
 
-        # Check for immediate Blackjacks and process players who get it
         for player in self.players.values():
             if player.hand.value == 21 and len(player.hand.cards) == 2:
-                player.is_playing = False # Player has Blackjack, no more turns
+                player.is_playing = False 
                 await player.websocket.send_json({"type": "game_message", "message": "У вас Блекджек! 🎉"})
-                await asyncio.sleep(1) # Small delay for message to be seen
+                await asyncio.sleep(1) 
 
-        # If any players are still active, start their turns
         active_players_after_blackjack_check = [p for p in self.players.values() if p.is_playing]
         if not active_players_after_blackjack_check:
-            # Everyone got blackjack or busted already, proceed to dealer
             await self.next_turn() 
         else:
-            # Ensure the current_turn_index points to the first active player
-            # It's already 0, but if first players had blackjack, get_current_player() will skip them.
             await self.send_room_state_to_all() 
 
 
     async def dealer_play(self):
         print(f"Room {self.room_id}: Dealer's turn.")
         self.status = "dealer_turn"
-        await self.send_room_state_to_all() # Reveal dealer's second card
+        await self.send_room_state_to_all() 
 
-        await asyncio.sleep(1) # Pause for players to see dealer's revealed card
+        await asyncio.sleep(1) 
 
         while self.dealer_hand.value < 17:
             self.dealer_hand.add_card(self.deck.deal_card())
             await self.send_room_state_to_all()
-            await asyncio.sleep(1) # Slow down dealer's play
+            await asyncio.sleep(1) 
 
         await self.end_round()
 
@@ -640,19 +1115,18 @@ class BlackjackRoom:
         dealer_score = self.dealer_hand.value
 
         for player in self.players.values():
-            user_in_db = users_db.get(player.user_id)
-            if not user_in_db: continue
+            user_data = get_user_data(player.user_id) # Fetch from DB
+            if not user_data: continue
 
             player_score = player.hand.value
             winnings = 0
             message = ""
             xp_gain = 0
 
-            # Determine outcomes
-            if player_score > 21: # Player busted (already handled, but safety check)
+            if player_score > 21: 
                 message = "Ви перебрали! Програш."
-                xp_gain = 1 # Small XP for playing
-            elif dealer_score > 21: # Dealer busted
+                xp_gain = 1 
+            elif dealer_score > 21: 
                 winnings = player.bet * 2
                 message = "Дилер перебрав! Ви виграли!"
                 xp_gain = 10
@@ -662,71 +1136,67 @@ class BlackjackRoom:
                 xp_gain = 10
             elif player_score < dealer_score:
                 message = "Ви програли."
-                xp_gain = 1 # Small XP for playing
-            else: # Push
-                winnings = player.bet # Return bet
+                xp_gain = 1 
+            else: 
+                winnings = player.bet 
                 message = "Нічия!"
-                xp_gain = 2 # Some XP for push
+                xp_gain = 2 
 
-            user_in_db["balance"] += winnings
-            user_in_db["xp"] += xp_gain
+            new_balance = user_data["balance"] + winnings
+            new_xp = user_data["xp"] + xp_gain
+            new_level = get_level_from_xp(new_xp)
 
-            # Level Up Check
-            while user_in_db["level"] < MAX_LEVEL and user_in_db["xp"] >= user_in_db["next_level_xp"]:
-                user_in_db["level"] += 1
-                user_in_db["xp"] = user_in_db["xp"] - user_in_db["next_level_xp"]
-                user_in_db["next_level_xp"] = LEVEL_XP_REQUIREMENTS.get(user_in_db["level"] + 1, user_in_db["next_level_xp"] * 2)
-                await player.websocket.send_json({"type": "level_up", "level": user_in_db["level"]})
+            update_user_data(player.user_id, balance=new_balance, xp=new_xp, level=new_level) # Update DB
+            
+            # Re-fetch for response consistency after DB update
+            updated_user_data_for_response = get_user_data(player.user_id)
+
+            if new_level > user_data["level"]: # Check if level actually increased
+                await player.websocket.send_json({"type": "level_up", "level": new_level})
 
             await player.websocket.send_json({
                 "type": "round_result",
                 "message": message,
                 "winnings": winnings,
-                "balance": user_in_db["balance"],
-                "xp": user_in_db["xp"],
-                "level": user_in_db["level"],
-                "next_level_xp": user_in_db["next_level_xp"],
+                "balance": updated_user_data_for_response["balance"],
+                "xp": updated_user_data_for_response["xp"],
+                "level": updated_user_data_for_response["level"],
+                "next_level_xp": get_xp_for_next_level(updated_user_data_for_response["level"]),
                 "final_player_score": player_score,
-                "final_dealer_score": dealer_score # Send final dealer score for clear display
+                "final_dealer_score": dealer_score 
             })
 
             player.reset_for_round() # Reset player for next round
 
-        # After all players are processed, set status back to waiting for next round
-        # Or transition to betting phase if we want to immediately start next round
-        self.status = "waiting" # Go back to waiting for next game start
-        self.dealer_hand = Hand() # Clear dealer hand
-        await self.send_room_state_to_all() # Send reset state
-        await asyncio.sleep(2) # Pause before moving to betting phase
-        self.status = "betting" # Immediately allow betting for next round
-        await self.send_room_state_to_all() # Tell clients to open betting UI
+        self.status = "waiting" 
+        self.dealer_hand = Hand() 
+        await self.send_room_state_to_all() 
+        await asyncio.sleep(2) 
+        self.status = "betting" 
+        await self.send_room_state_to_all() 
 
 
 class BlackjackRoomManager:
     def __init__(self):
-        self.rooms: Dict[str, BlackjackRoom] = {} # room_id: BlackjackRoom
+        self.rooms: Dict[str, BlackjackRoom] = {} 
 
-    async def create_or_join_room(self, user_id: str, username: str, websocket: WebSocket):
-        # Try to find an existing 'waiting' or 'betting' room that's not full
+    async def create_or_join_room(self, user_id: int, username: str, websocket: WebSocket): # user_id as int
         for room_id, room in self.rooms.items():
             if room.status in ["waiting", "betting"] and len(room.players) < room.max_players:
                 success, msg = await room.add_player(user_id, username, websocket)
                 if success:
                     print(f"Player {user_id} joined existing room {room_id}. Current players: {len(room.players)}")
-                    # If minimum players reached, start timer
                     if len(room.players) >= room.min_players and room.status == "waiting":
                         room.status = "starting_timer"
-                        # Cancel existing timer if any, and start a new one
                         if room.game_start_timer and not room.game_start_timer.done():
                             room.game_start_timer.cancel()
-                        room.timer_countdown = 20 # Set initial timer value for client
+                        room.timer_countdown = 20 
                         room.game_start_timer = asyncio.create_task(self._start_game_after_delay(room_id, 20))
                         print(f"Room {room_id}: Game start timer initiated for 20 seconds.")
-                    await room.send_room_state_to_all() # Send initial state on join/create
+                    await room.send_room_state_to_all() 
                     return room_id
         
-        # No suitable room found, create a new one
-        new_room_id = str(uuid.uuid4())[:8] # Short unique ID
+        new_room_id = str(uuid.uuid4())[:8] 
         new_room = BlackjackRoom(new_room_id)
         self.rooms[new_room_id] = new_room
         success, msg = await new_room.add_player(user_id, username, websocket)
@@ -734,7 +1204,7 @@ class BlackjackRoomManager:
             print(f"Player {user_id} created and joined new room {new_room_id}")
             await new_room.send_room_state_to_all()
             return new_room_id
-        return None # Should not happen if add_player succeeds
+        return None 
 
     async def _start_game_after_delay(self, room_id: str, delay: int):
         room = self.rooms.get(room_id)
@@ -742,22 +1212,21 @@ class BlackjackRoomManager:
             return
 
         for i in range(delay, 0, -1):
-            room.timer_countdown = i # Update timer countdown in room state
+            room.timer_countdown = i 
             if room.status != "starting_timer" or len(room.players) < room.min_players:
                 print(f"Room {room_id} timer cancelled/interrupted.")
-                # If player count drops below minimum, reset status
                 if len(room.players) < room.min_players:
                     room.status = "waiting"
-                room.timer_countdown = 0 # Reset timer on cancel
-                await room.send_room_state_to_all() # Inform clients about status change
+                room.timer_countdown = 0 
+                await room.send_room_state_to_all() 
                 return
-            await room.send_room_state_to_all() # Send state to update timer countdown on clients
+            await room.send_room_state_to_all() 
             await asyncio.sleep(1)
         
         if room.status == "starting_timer" and len(room.players) >= room.min_players:
             print(f"Room {room_id}: Timer finished, moving to betting phase.")
-            room.status = "betting" # Transition to betting phase
-            room.timer_countdown = 0 # Reset timer
+            room.status = "betting" 
+            room.timer_countdown = 0 
             await room.send_room_state_to_all()
 
 
@@ -765,19 +1234,20 @@ blackjack_room_manager = BlackjackRoomManager()
 
 
 # --- WebSocket Endpoint ---
-# This endpoint handles real-time game interactions for Blackjack.
 @app.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: str):
-    # Retrieve user's username. This should be consistent with how users are handled elsewhere.
-    username = users_db.get(user_id, {}).get("username", f"Гравець {user_id[-4:]}")
+async def websocket_endpoint(websocket: WebSocket, user_id: str): # user_id as str initially from path
+    user_id_int = int(user_id) # Convert to int for internal use
+
+    # Fetch username from DB, or use a default
+    user_data_db = get_user_data(user_id_int)
+    username = user_data_db.get("username", f"Гравець {str(user_id_int)[-4:]}")
     
-    room_id = await blackjack_room_manager.create_or_join_room(user_id, username, websocket)
+    room_id = await blackjack_room_manager.create_or_join_room(user_id_int, username, websocket)
     if not room_id:
         await websocket.close(code=1008, reason="Could not join/create room.")
         return
 
     try:
-        # Initial state is already sent by create_or_join_room
         while True:
             data = await websocket.receive_text()
             try:
@@ -792,41 +1262,37 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 if action == "bet":
                     amount = message.get("amount")
                     if amount is not None:
-                        await room.handle_bet(user_id, amount)
+                        await room.handle_bet(user_id_int, amount)
                     else:
                         await websocket.send_json({"type": "error", "message": "Сума ставки не вказана."})
                 elif action in ["hit", "stand"]:
-                    await room.handle_action(user_id, action)
-                elif action == "request_state": # For new players to get current state
-                    await room.send_room_state_to_all() # Will send to all including requester
+                    await room.handle_action(user_id_int, action)
+                elif action == "request_state": 
+                    await room.send_room_state_to_all() 
                 else:
                     await websocket.send_json({"type": "error", "message": "Невідома дія."})
 
             except json.JSONDecodeError:
-                print(f"Received non-JSON message from {user_id}: {data}")
+                print(f"Received non-JSON message from {user_id_int}: {data}")
                 await websocket.send_json({"type": "error", "message": "Неправильний формат повідомлення (очікується JSON)."})
             except Exception as e:
-                print(f"Error handling WebSocket message from {user_id}: {e}")
+                print(f"Error handling WebSocket message from {user_id_int}: {e}")
                 await websocket.send_json({"type": "error", "message": f"Помилка сервера: {str(e)}"})
 
     except WebSocketDisconnect:
-        print(f"Client {user_id} disconnected from room {room_id}.")
+        print(f"Client {user_id_int} disconnected from room {room_id}.")
         room = blackjack_room_manager.rooms.get(room_id)
         if room:
-            await room.remove_player(user_id)
-            # If players remain, notify them
+            await room.remove_player(user_id_int)
             if room.players:
                 await room.send_room_state_to_all()
         
     except Exception as e:
-        print(f"Unexpected error in WebSocket endpoint for {user_id}: {e}")
-        # Consider more robust error handling / logging
+        print(f"Unexpected error in WebSocket endpoint for {user_id_int}: {e}")
         
 # --- Serve the main HTML file ---
-# This serves your React frontend (index.html)
 @app.get("/")
 async def get_root():
-    # Read index.html content
     index_html_path = os.path.join(WEBAPP_DIR, "index.html")
     if not os.path.exists(index_html_path):
         raise HTTPException(status_code=404, detail="index.html not found")
@@ -837,58 +1303,63 @@ async def get_root():
     return HTMLResponse(content=html_content)
 
 # --- Telegram Webhook Endpoint ---
-# This endpoint receives updates from Telegram and passes them to aiogram dispatcher.
 @app.post(WEBHOOK_PATH)
 async def bot_webhook(request: Request):
     update_json = await request.json()
     update = types.Update.model_validate(update_json, context={"bot": bot})
-    # ВИПРАВЛЕНО: Правильний спосіб передачі Update для aiogram v3 webhook
-    await dp.feed_update(bot=bot, update=update)
+    await dp.feed_update(bot, update) # Correct aiogram v3 webhook processing
     return {"ok": True}
 
-# --- On startup: set webhook for Telegram Bot ---
-# This function runs when your FastAPI application starts.
-# It sets the Telegram webhook URL so Telegram knows where to send updates.
+# --- On startup: set webhook for Telegram Bot and initialize DB ---
 @app.on_event("startup")
 async def on_startup():
-    # Render automatically sets RENDER_EXTERNAL_HOSTNAME to your service's external URL.
-    # We use this to construct the webhook URL.
+    print("Application startup event triggered.")
+    init_db() # Ініціалізуємо базу даних
+    print("Database initialization attempted.")
+
     external_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
     if not external_hostname:
-        print("WARN: RENDER_EXTERNAL_HOSTNAME environment variable not set. Assuming localhost for webhook setup.")
-        external_hostname = "http://localhost:8000" # Fallback for local testing
+        logger.warning("RENDER_EXTERNAL_HOSTNAME environment variable not set. Assuming localhost for webhook setup.")
+        external_hostname = "localhost:8000" # Fallback for local testing
 
     global WEBHOOK_URL
-    WEBHOOK_URL = f"https://{external_hostname}{WEBHOOK_PATH}" # Use https for Render
-    # Ensure WEB_APP_FRONTEND_URL is also treated as https for Render
+    # For Render.com, ensure HTTPS for webhook URL
+    WEBHOOK_URL = f"https://{external_hostname}{WEBHOOK_PATH}" 
+    
+    # Ensure WEB_APP_FRONTEND_URL also uses HTTPS on Render
     global WEB_APP_FRONTEND_URL
-    if not WEB_APP_FRONTEND_URL.startswith("https://"):
+    if WEB_APP_FRONTEND_URL and not WEB_APP_FRONTEND_URL.startswith("https://"):
         WEB_APP_FRONTEND_URL = f"https://{WEB_APP_FRONTEND_URL}"
 
 
     # Set webhook
-    try:
-        webhook_info = await bot.get_webhook_info()
-        if webhook_info.url != WEBHOOK_URL:
-            await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True) # drop_pending_updates=True clears old updates
-            print(f"Telegram webhook set to: {WEBHOOK_URL}")
-        else:
-            print(f"Telegram webhook already set to: {WEBHOOK_URL}")
-    except Exception as e:
-        print(f"ERROR: Failed to set Telegram webhook: {e}")
-        if BOT_TOKEN == "DUMMY_TOKEN":
-            print("Hint: Is BOT_TOKEN correctly set as an environment variable?")
+    if API_TOKEN and API_TOKEN != "DUMMY_TOKEN":
+        try:
+            webhook_info = await bot.get_webhook_info()
+            if webhook_info.url != WEBHOOK_URL:
+                await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True) # drop_pending_updates=True clears old updates
+                logger.info(f"Telegram webhook set to: {WEBHOOK_URL}")
+            else:
+                logger.info(f"Telegram webhook already set to: {WEBHOOK_URL}")
+        except Exception as e:
+            logger.error(f"Failed to set Telegram webhook: {e}")
+            logger.error("Hint: Is BOT_TOKEN correctly set as an environment variable and valid?")
+    else:
+        logger.warning("Skipping Telegram webhook setup because BOT_TOKEN is not set or is a dummy value.")
+
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    print("Application shutdown event triggered.")
     # Delete webhook and close bot session when the app shuts down.
-    try:
-        await bot.delete_webhook()
-        print("Telegram webhook deleted.")
-    except Exception as e:
-        print(f"ERROR: Failed to delete Telegram webhook on shutdown: {e}")
+    if API_TOKEN and API_TOKEN != "DUMMY_TOKEN":
+        try:
+            await bot.delete_webhook()
+            logger.info("Telegram webhook deleted.")
+        except Exception as e:
+            logger.error(f"Failed to delete Telegram webhook on shutdown: {e}")
     finally:
         await dp.storage.close() # Close dispatcher storage if used
         await bot.session.close() # Close aiohttp session
-        print("Bot session closed.")
+        logger.info("Bot session closed.")
 
