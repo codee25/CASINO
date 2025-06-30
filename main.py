@@ -84,7 +84,7 @@ else:
 dp = Dispatcher()
 
 # --- Конфігурація гри ---
-SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀']
+SYMBOLS = ['🍒', '🍋', '�', '🍇', '🔔', '💎', '🍀']
 WILD_SYMBOL = '⭐'
 SCATTER_SYMBOL = '💰'
 ALL_REEL_SYMBOLS = SYMBOLS + [WILD_SYMBOL, SCATTER_SYMBOL]
@@ -132,7 +132,7 @@ def get_xp_for_next_level(level: int) -> int:
 
 PAYOUTS = {
     ('🍒', '🍒', '🍒'): 1000, ('🍋', '🍋', '🍋'): 800, ('🍊', '🍊', '🍊'): 600,
-    ('🍇', '🍇', '🍇'): 400, ('�', '🔔', '🔔'): 300, ('💎', '💎', '💎'): 200,
+    ('🍇', '🍇', '🍇'): 400, ('🔔', '🔔', '🔔'): 300, ('💎', '💎', '💎'): 200,
     ('🍀', '🍀', '🍀'): 150, ('⭐', '⭐', '⭐'): 2000, 
     ('🍒', '🍒'): 100, ('🍋', '🍋'): 80, ('🍊', '🍊'): 60,
     ('🍇', '🍇'): 40, ('🔔', '🔔'): 30, ('💎', '💎'): 20,
@@ -810,11 +810,11 @@ class BlackjackRoom:
             else:
                 # Якщо гравець, що вийшов, був поточним гравцем або гравець був останнім активним
                 if self.status == "playing" or self.status == "betting":
-                    active_players = [p for p in self.players.values() if p.is_playing]
-                    if not active_players and self.status == "playing":
+                    active_players_after_removal = [p for p in self.players.values() if p.is_playing]
+                    if not active_players_after_removal and self.status == "playing":
                         # Якщо всі гравці вийшли під час гри, завершити раунд
                         await self.end_round()
-                    elif self.status == "playing" and (self.current_turn_index >= len(active_players) or self.players.get(user_id) == self.get_current_player()):
+                    elif self.status == "playing" and (self.current_turn_index >= len(active_players_after_removal) or self.players.get(user_id) == self.get_current_player()):
                         # Якщо вийшов поточний гравець, або індекс став недійсним, пересунути хід
                         await self.next_turn()
                 await self.send_room_state_to_all()
@@ -1207,6 +1207,10 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     user_data_db = get_user_data(user_id_int)
     username = user_data_db.get("username", f"Гравець {str(user_id_int)[-4:]}")
     
+    # ПЕРШИЙ КРОК: Прийняти WebSocket-з'єднання
+    await websocket.accept()
+    logger.info(f"WebSocket connection accepted for user {user_id_int}.")
+
     # Додаємо гравця до кімнати або перепідключаємо
     room_id = await blackjack_room_manager.create_or_join_room(user_id_int, username, websocket)
     
@@ -1215,7 +1219,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         await websocket.close(code=1008, reason="Could not join/create room.")
         return
 
-    # Зберігаємо WebSocket для гравця
+    # Зберігаємо WebSocket для гравця (на випадок перепідключення)
     room = blackjack_room_manager.rooms.get(room_id)
     if room and user_id_int in room.players:
         room.players[user_id_int].websocket = websocket
