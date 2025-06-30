@@ -84,7 +84,7 @@ else:
 dp = Dispatcher()
 
 # --- Конфігурація гри ---
-SYMBOLS = ['🍒', '🍋', '�', '🍇', '🔔', '💎', '🍀']
+SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀']
 WILD_SYMBOL = '⭐'
 SCATTER_SYMBOL = '💰'
 ALL_REEL_SYMBOLS = SYMBOLS + [WILD_SYMBOL, SCATTER_SYMBOL]
@@ -498,7 +498,7 @@ async def add_balance_command(message: Message):
     update_user_data(user_id, balance=new_balance)
     updated_user_data = get_user_data(user_id)
 
-    await message.reply(f"🎉 {amount} фантиків успішно додано! Ваш новий баланс: {updated_user_data['balance']} фантиків. 🎉")
+    await message.reply(f"🎉 {amount} фантиків успішно додано! Ваш новий баланс: {updated_user_data['balance']} фантиків. �")
     logger.info(f"Admin {user_id} added {amount} to their balance. New balance: {updated_user_data['balance']}.")
 
 @dp.message(Command("get_coins"))
@@ -810,11 +810,11 @@ class BlackjackRoom:
             else:
                 # Якщо гравець, що вийшов, був поточним гравцем або гравець був останнім активним
                 if self.status == "playing" or self.status == "betting":
-                    active_players_after_removal = [p for p in self.players.values() if p.is_playing]
-                    if not active_players_after_removal and self.status == "playing":
+                    active_players = [p for p in self.players.values() if p.is_playing]
+                    if not active_players and self.status == "playing":
                         # Якщо всі гравці вийшли під час гри, завершити раунд
                         await self.end_round()
-                    elif self.status == "playing" and (self.current_turn_index >= len(active_players_after_removal) or self.players.get(user_id) == self.get_current_player()):
+                    elif self.status == "playing" and (self.current_turn_index >= len(active_players) or self.players.get(user_id) == self.get_current_player()):
                         # Якщо вийшов поточний гравець, або індекс став недійсним, пересунути хід
                         await self.next_turn()
                 await self.send_room_state_to_all()
@@ -1122,19 +1122,52 @@ class BlackjackRoomManager:
     def __init__(self):
         self.rooms: Dict[str, BlackjackRoom] = {}
         self.player_to_room: Dict[int, str] = {} # Додано для швидкого пошуку кімнати гравця
+        self.connected_websockets: Dict[int, WebSocket] = {} # Нова мапа для всіх підключених WS
 
-    async def create_or_join_room(self, user_id: int, username: str, websocket: WebSocket):
-        # Якщо гравець вже в кімнаті, просто оновити його WebSocket
+    async def register_websocket(self, user_id: int, websocket: WebSocket):
+        """Реєструє WebSocket для користувача. Викликається одразу після accept."""
+        self.connected_websockets[user_id] = websocket
+        logger.info(f"Registered websocket for user {user_id}.")
+
+    async def unregister_websocket(self, user_id: int):
+        """Скасовує реєстрацію WebSocket для користувача."""
+        if user_id in self.connected_websockets:
+            del self.connected_websockets[user_id]
+            logger.info(f"Unregistered websocket for user {user_id}.")
+
+    async def send_message_to_user(self, user_id: int, message: Dict):
+        """Допоміжна функція для надсилання повідомлень будь-якому підключеному користувачеві."""
+        websocket = self.connected_websockets.get(user_id)
+        # Перевірка client_state == 1 (CONNECTED) є більш надійною, ніж просто 'if websocket'
+        if websocket and websocket.client_state == 1: 
+            try:
+                await websocket.send_json(message)
+            except Exception as e:
+                logger.error(f"Failed to send message to user {user_id}: {e}")
+        else:
+            logger.warning(f"Attempted to send message to disconnected or invalid websocket for user {user_id}.")
+
+    async def handle_join_room_request(self, user_id: int, username: str):
+        """
+        Обробляє запит клієнта на приєднання до кімнати Блекджеку.
+        Повертає (True, room_id) у разі успіху або (False, error_message).
+        """
+        websocket = self.connected_websockets.get(user_id)
+        if not websocket or websocket.client_state != 1:
+            logger.error(f"Cannot join room: websocket not registered or not connected for user {user_id}")
+            return False, "Внутрішня помилка: WebSocket не зареєстрований або не підключений."
+
+        # Якщо гравець вже в кімнаті, просто повідомляємо його про це
         if user_id in self.player_to_room:
             room_id = self.player_to_room[user_id]
             room = self.rooms.get(room_id)
             if room:
-                success, msg = await room.add_player(user_id, username, websocket) # Це оновлює WebSocket
-                return room_id
+                await room.send_room_state_to_all()
+                return True, room_id
             else:
-                # Кімната не знайдена, але гравець був зареєстрований. Очищаємо і створюємо нову.
+                # Кімната не знайдена, але гравець був зареєстрований. Очищаємо і продовжуємо.
                 del self.player_to_room[user_id]
-                logger.warning(f"Player {user_id} was mapped to non-existent room {room_id}. Cleaning up.")
+                logger.warning(f"Player {user_id} was mapped to non-existent room {room_id}. Cleaning up and trying to join new.")
 
         # Шукаємо існуючу кімнату
         for room_id, room in self.rooms.items():
@@ -1150,11 +1183,12 @@ class BlackjackRoomManager:
                         if room.game_start_timer and not room.game_start_timer.done():
                             room.game_start_timer.cancel()
                         room.timer_countdown = 20
-                        room.game_start_timer = asyncio.create_task(self._start_game_after_delay(room_id, 20))
+                        # Викликаємо метод кімнати для запуску таймера
+                        room.game_start_timer = asyncio.create_task(room._start_game_after_delay(room_id, 20)) 
                         logger.info(f"Room {room_id}: Game start timer initiated for 20 seconds.")
                         await room.send_room_state_to_all()
-                    return room_id
-
+                    return True, room_id # Повертаємо room_id у разі успіху
+        
         # Якщо не знайдено, створюємо нову кімнату
         new_room_id = str(uuid.uuid4())[:8]
         new_room = BlackjackRoom(new_room_id)
@@ -1164,40 +1198,46 @@ class BlackjackRoomManager:
             self.player_to_room[user_id] = new_room_id
             logger.info(f"Player {user_id} created and joined new room {new_room_id}")
             await new_room.send_room_state_to_all()
-            return new_room_id
+            return True, new_room_id # Повертаємо room_id у разі успіху
         
-        return None # Якщо з якоїсь причини не вдалося приєднатися або створити
+        return False, "Не вдалося приєднатися або створити кімнату."
 
-    async def _start_game_after_delay(self, room_id: str, delay: int):
-        room = self.rooms.get(room_id)
-        if not room: return
-        
-        for i in range(delay, 0, -1):
-            room.timer_countdown = i
-            # Перевіряємо умови для скасування таймера
-            if room.status != "starting_timer" or len(room.players) < room.min_players:
-                logger.info(f"Room {room_id} timer cancelled/interrupted. Status: {room.status}, Players: {len(room.players)}")
-                if len(room.players) < room.min_players:
-                    room.status = "waiting" # Повертаємося до очікування, якщо гравців стало менше
-                room.timer_countdown = 0
-                await room.send_room_state_to_all()
-                return
-            await room.send_room_state_to_all()
-            await asyncio.sleep(1)
-        
-        # Таймер завершено
-        if room.status == "starting_timer" and len(room.players) >= room.min_players:
-            logger.info(f"Room {room_id}: Timer finished, moving to betting phase.")
-            room.status = "betting"
-            room.timer_countdown = 0
-            await room.send_room_state_to_all()
+    async def remove_player(self, user_id: int):
+        """Видаляє гравця з кімнати та оновлює стан менеджера."""
+        room_id = self.player_to_room.get(user_id)
+        if room_id:
+            room = self.rooms.get(room_id)
+            if room and user_id in room.players:
+                # Видаляємо гравця з кімнати
+                del room.players[user_id]
+                logger.info(f"Player {user_id} removed from room {room_id}")
+                # Видаляємо гравця з мапи player_to_room
+                del self.player_to_room[user_id] 
+
+                if not room.players:
+                    # Якщо кімната порожня, скасувати таймер і видалити кімнату
+                    if room.game_start_timer and not room.game_start_timer.done():
+                        room.game_start_timer.cancel()
+                    if room_id in self.rooms:
+                        del self.rooms[room_id]
+                    logger.info(f"Room {room_id} is empty and removed.")
+                else:
+                    # Якщо гравець, що вийшов, був поточним гравцем або гравець був останнім активним
+                    if room.status == "playing" or room.status == "betting":
+                        active_players = [p for p in room.players.values() if p.is_playing]
+                        if not active_players and room.status == "playing":
+                            await room.end_round()
+                        elif room.status == "playing" and (room.current_turn_index >= len(active_players) or room.players.get(user_id) == room.get_current_player()):
+                            await room.next_turn()
+                    await room.send_room_state_to_all()
+            else:
+                logger.warning(f"Player {user_id} in player_to_room map for {room_id}, but room or player not found in room. Cleaning up player_to_room entry.")
+                if user_id in self.player_to_room:
+                    del self.player_to_room[user_id]
         else:
-            logger.info(f"Room {room_id}: Timer finished but conditions not met for betting. Status: {room.status}, Players: {len(room.players)}")
-            room.status = "waiting" # Повертаємося до очікування, якщо умови не виконані
-            room.timer_countdown = 0
-            await room.send_room_state_to_all()
+            logger.warning(f"Player {user_id} not found in any room for removal (not in player_to_room map).")
 
-
+# Ініціалізуємо менеджер кімнат
 blackjack_room_manager = BlackjackRoomManager()
 
 # --- WebSocket Endpoint ---
@@ -1211,22 +1251,24 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await websocket.accept()
     logger.info(f"WebSocket connection accepted for user {user_id_int}.")
 
-    # Додаємо гравця до кімнати або перепідключаємо
-    room_id = await blackjack_room_manager.create_or_join_room(user_id_int, username, websocket)
-    
-    if not room_id:
-        logger.error(f"Failed to join/create room for user {user_id_int}. Closing websocket.")
-        await websocket.close(code=1008, reason="Could not join/create room.")
-        return
+    # Зареєструвати WebSocket у менеджері
+    await blackjack_room_manager.register_websocket(user_id_int, websocket)
 
-    # Зберігаємо WebSocket для гравця (на випадок перепідключення)
-    room = blackjack_room_manager.rooms.get(room_id)
-    if room and user_id_int in room.players:
-        room.players[user_id_int].websocket = websocket
-    else:
-        logger.error(f"Room {room_id} or player {user_id_int} not found after create_or_join_room. This should not happen.")
-        await websocket.close(code=1008, reason="Internal error: Room/player not found.")
-        return
+    # current_room_id буде встановлено, коли користувач приєднається до кімнати Блекджеку
+    current_room_id: Optional[str] = None 
+    if user_id_int in blackjack_room_manager.player_to_room:
+        current_room_id = blackjack_room_manager.player_to_room[user_id_int]
+        logger.info(f"User {user_id_int} reconnected and was already in room {current_room_id}.")
+        # Відправити оновлений стан кімнати, якщо гравець вже був у кімнаті
+        room = blackjack_room_manager.rooms.get(current_room_id)
+        if room:
+            await room.send_room_state_to_all()
+        else:
+            # Якщо кімната не існує, але гравець був у мапі, очистити мапу
+            del blackjack_room_manager.player_to_room[user_id_int]
+            current_room_id = None
+            await blackjack_room_manager.send_message_to_user(user_id_int, {"type": "game_message", "message": "Ваша попередня кімната не знайдена. Будь ласка, приєднайтеся до нової гри."})
+
 
     try:
         while True:
@@ -1235,45 +1277,68 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 message = json.loads(data)
                 action = message.get("action")
                 
-                logger.info(f"WS: Received message from {user_id_int} in room {room_id}: {message}")
+                logger.info(f"WS: Received message from {user_id_int}: {message}")
 
-                if not room: # Перевіряємо кімнату ще раз, на випадок якщо її видалили
-                    await websocket.send_json({"type": "error", "message": "Кімната не знайдена або була видалена."})
-                    continue
-
-                if action == "bet":
-                    amount = message.get("amount")
-                    if amount is not None:
-                        await room.handle_bet(user_id_int, amount)
+                if action == "join_blackjack_room":
+                    success, room_identifier = await blackjack_room_manager.handle_join_room_request(user_id_int, username)
+                    if success:
+                        current_room_id = room_identifier
+                        logger.info(f"User {user_id_int} successfully joined room {current_room_id} via 'join_blackjack_room' action.")
+                        # Initial state is sent by handle_join_room_request
                     else:
-                        await websocket.send_json({"type": "error", "message": "Сума ставки не вказана."})
-                elif action in ["hit", "stand"]:
-                    await room.handle_action(user_id_int, action)
+                        await blackjack_room_manager.send_message_to_user(user_id_int, {"type": "error", "message": room_identifier})
                 elif action == "request_state":
-                    await room.send_room_state_to_all()
+                    # Запит стану може надходити як від гравця в кімнаті, так і від гравця поза кімнатою
+                    room_id_for_state = blackjack_room_manager.player_to_room.get(user_id_int)
+                    if room_id_for_state:
+                        room = blackjack_room_manager.rooms.get(room_id_for_state)
+                        if room:
+                            await room.send_room_state_to_all()
+                        else:
+                            await blackjack_room_manager.send_message_to_user(user_id_int, {"type": "error", "message": "Кімната для запиту стану не знайдена."})
+                            # Також, очистити мапу player_to_room, якщо кімнати немає
+                            if user_id_int in blackjack_room_manager.player_to_room:
+                                del blackjack_room_manager.player_to_room[user_id_int]
+                            current_room_id = None # Скинути локальний current_room_id
+                    else:
+                        # Якщо гравець не в кімнаті, просто повідомте його
+                        await blackjack_room_manager.send_message_to_user(user_id_int, {"type": "game_message", "message": "Ви ще не приєдналися до гри Блекджек. Натисніть 'Блекджек' для початку."})
+                elif current_room_id: # Дії, які вимагають перебування в кімнаті
+                    room = blackjack_room_manager.rooms.get(current_room_id)
+                    if not room:
+                        await blackjack_room_manager.send_message_to_user(user_id_int, {"type": "error", "message": "Кімната не знайдена або була видалена."})
+                        current_room_id = None # Очистити room ID, якщо його немає
+                        continue
+
+                    if action == "bet":
+                        amount = message.get("amount")
+                        if amount is not None: await room.handle_bet(user_id_int, amount)
+                        else: await blackjack_room_manager.send_message_to_user(user_id_int, {"type": "error", "message": "Сума ставки не вказана."})
+                    elif action in ["hit", "stand"]:
+                        await room.handle_action(user_id_int, action)
+                    else:
+                        await blackjack_room_manager.send_message_to_user(user_id_int, {"type": "error", "message": "Невідома дія."})
                 else:
-                    await websocket.send_json({"type": "error", "message": "Невідома дія."})
+                    await blackjack_room_manager.send_message_to_user(user_id_int, {"type": "error", "message": "Будь ласка, спочатку приєднайтеся до гри Блекджек."})
+
             except json.JSONDecodeError:
                 logger.warning(f"Received non-JSON message from {user_id_int}: {data}")
-                await websocket.send_json({"type": "error", "message": "Неправильний формат повідомлення (очікується JSON)."})
+                await blackjack_room_manager.send_message_to_user(user_id_int, {"type": "error", "message": "Неправильний формат повідомлення (очікується JSON)."})
             except Exception as e:
-                logger.error(f"Error handling WebSocket message from {user_id_int} in room {room_id}: {e}", exc_info=True)
-                await websocket.send_json({"type": "error", "message": f"Помилка сервера: {str(e)}"})
+                logger.error(f"Error handling WebSocket message from {user_id_int}: {e}", exc_info=True)
+                await blackjack_room_manager.send_message_to_user(user_id_int, {"type": "error", "message": f"Помилка сервера: {str(e)}"})
     except WebSocketDisconnect:
-        logger.info(f"Client {user_id_int} disconnected from room {room_id}.")
-        room = blackjack_room_manager.rooms.get(room_id)
-        if room:
-            await room.remove_player(user_id_int)
-            # Видаляємо гравця з мапи player_to_room
-            if user_id_int in blackjack_room_manager.player_to_room:
-                del blackjack_room_manager.player_to_room[user_id_int]
-        else:
-            logger.warning(f"Room {room_id} not found on disconnect for player {user_id_int}.")
+        logger.info(f"Client {user_id_int} disconnected.")
+        # Скасувати реєстрацію WebSocket
+        await blackjack_room_manager.unregister_websocket(user_id_int)
+        # Видалити гравця з кімнати, якщо він був у ній
+        if user_id_int in blackjack_room_manager.player_to_room:
+            await blackjack_room_manager.remove_player(user_id_int)
     except Exception as e:
         logger.critical(f"Unexpected error in WebSocket endpoint for {user_id_int}: {e}", exc_info=True)
         # Надіслати помилку перед закриттям, якщо можливо
         try:
-            await websocket.send_json({"type": "error", "message": f"Критична помилка сервера: {str(e)}"})
+            await blackjack_room_manager.send_message_to_user(user_id_int, {"type": "error", "message": f"Критична помилка сервера: {str(e)}"})
         except RuntimeError:
             pass # WebSocket вже міг бути закритий
 
