@@ -66,12 +66,14 @@
             const [isLoading, setIsLoading] = useState(true);
             const [error, setError] = useState(null);
 
-            // Backend API URL (ВАШ АКТУАЛЬНИЙ URL!)
-            // !!! ВСТАВТЕ СЮДИ АКТУАЛЬНИЙ URL ВАШОГО WEB SERVICE (БОТА) НА RENDER.COM !!!
-            // НАПРИКЛАД: 'https://ваш-унікальний-домен.onrender.com'
-            // НЕ ЗАБУДЬТЕ ЗМІНИТИ ЦЕЙ РЯДОК НА СВІЙ АКТУАЛЬНИЙ URL БЕКЕНДУ!
-            const API_BASE_URL = 'https://casino-0h0l.onrender.com';            // Наприклад: 'https://casino-0h0l.onrender.com'
-            // АБО: 'http://localhost:8000' для локальної розробки
+            // ===========================================================================================
+            // >>>>>>>>>>>>> ВАЖЛИВО: ОНОВІТЬ ЦЕЙ URL НА АКТУАЛЬНИЙ URL ВАШОГО WEB SERVICE НА RENDER.COM <<<<<<<<<<<<<<
+            // ПРИКЛАД: 'https://ваш-унікальний-домен.onrender.com'
+            // ЗАМІНІТЬ 'https://casino-0h0l.onrender.com' НА ВАШ ВЛАСНИЙ URL З Render.com
+            // ===========================================================================================
+            const API_BASE_URL = 'https://casino-0h0l.onrender.com'; // <--- ПЕРЕКОНАЙТЕСЯ, ЩО ЦЕ ВАШ АКТУАЛЬНИЙ URL
+            // ===========================================================================================
+
 
             // Helper to send logs to Telegram bot for debugging
             const sendTelegramLog = useCallback((message, type = 'JS_LOG') => {
