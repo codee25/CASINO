@@ -42,7 +42,7 @@ if not BOT_TOKEN:
 
 default_props = DefaultBotProperties(parse_mode=ParseMode.HTML)
 bot = Bot(token=BOT_TOKEN if BOT_TOKEN else "DUMMY_TOKEN", default=default_props) # Use dummy if not set, but bot won't work
-dp = Dispatcher(bot)
+dp = Dispatcher() # ВИПРАВЛЕНО: Більше не передаємо 'bot' сюди напряму
 
 # Mock database (in a real application, use a proper database like PostgreSQL, MongoDB, or Firestore)
 # Using a simple dictionary for demonstration purposes. This will reset on server restart.
@@ -153,7 +153,7 @@ async def spin_slot(spin_data: SpinData):
         raise HTTPException(status_code=400, detail="Not enough balance")
 
     user["balance"] -= bet_amount
-    symbols = [random.choice(['�', '🍋', '🍊', '🍇', '🔔', '💎', '🍀', '⭐', '💰']) for _ in range(3)]
+    symbols = [random.choice(['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀', '⭐', '💰']) for _ in range(3)]
 
     winnings = 0
     message = "Спробуйте ще раз!"
@@ -367,7 +367,11 @@ class Hand:
     
     def to_json(self, hide_first: bool = False) -> List[str]:
         if hide_first and self.cards:
-            return ["Hidden", str(self.cards[1])] + [str(card) for card in self.cards[2:]] # Hide first card, show second as string
+            # For Blackjack, hide the second card of the dealer, not the first
+            if len(self.cards) > 1:
+                return [str(self.cards[0]), "Hidden"]
+            else: # If only one card, still show it
+                return [str(self.cards[0])]
         return [str(card) for card in self.cards]
 
 
@@ -427,7 +431,8 @@ class BlackjackRoom:
                 print(f"Room {self.room_id} is empty and removed.")
             else:
                 # If game was in progress and current player left, advance turn
-                if self.status == "playing" and not self.players[user_id].is_playing: # If current player left mid-turn
+                # This logic might need refinement for complex multi-player states
+                if self.status == "playing":
                      active_players_after_removal = [p for p in self.players.values() if p.is_playing]
                      if not active_players_after_removal: # All players done, go to dealer
                          await self.next_turn()
@@ -847,7 +852,12 @@ async def on_startup():
         external_hostname = "http://localhost:8000" # Fallback for local testing
 
     global WEBHOOK_URL
-    WEBHOOK_URL = f"{external_hostname}{WEBHOOK_PATH}"
+    WEBHOOK_URL = f"https://{external_hostname}{WEBHOOK_PATH}" # Use https for Render
+    # Ensure WEB_APP_FRONTEND_URL is also treated as https for Render
+    global WEB_APP_FRONTEND_URL
+    if not WEB_APP_FRONTEND_URL.startswith("https://"):
+        WEB_APP_FRONTEND_URL = f"https://{WEB_APP_FRONTEND_URL}"
+
 
     # Set webhook
     try:
