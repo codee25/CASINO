@@ -838,7 +838,7 @@ async def bot_webhook(request: Request):
     update_json = await request.json()
     update = types.Update.model_validate(update_json, context={"bot": bot})
     # ВИПРАВЛЕНО: Правильний спосіб передачі Update для aiogram v3 webhook
-    await dp.feed_update(bot, update) # <-- Змінено тут
+    await dp.feed_update(bot=bot, update=update)
     return {"ok": True}
 
 # --- On startup: set webhook for Telegram Bot ---
