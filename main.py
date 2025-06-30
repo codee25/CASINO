@@ -22,7 +22,9 @@ logger = logging.getLogger(__name__)
 
 # --- Змінні середовища ---
 API_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-WEB_APP_URL = os.getenv('WEB_APP_FRONTEND_URL', 'https://placeholder.com')
+# !!! ВАЖЛИВО: WEB_APP_FRONTEND_URL має бути АКТУАЛЬНИМ URL ВАШОГО STATIC SITE на Render.com !!!
+# Наприклад: 'https://your-unique-static-site-name.onrender.com'
+WEB_APP_URL = os.getenv('WEB_APP_FRONTEND_URL', 'https://example.com') # ЗАМІНІТЬ 'https://example.com' на реальний URL ВАШОГО ФРОНТЕНДУ!
 WEBHOOK_HOST = os.getenv('WEBHOOK_HOST')
 
 WEBHOOK_PATH = f'/webhook/{API_TOKEN}'
@@ -38,12 +40,14 @@ except ValueError:
 
 # --- Налаштування бази даних PostgreSQL ---
 DATABASE_URL = os.getenv('DATABASE_URL')
+if not DATABASE_URL:
+    logger.critical("DATABASE_URL environment variable is not set. The bot will not be able to connect to the database.")
 
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 # --- Конфігурація гри (збігається з JS фронтендом) ---
-SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '�', '🍀']
+SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀'] # Символ '' виправлено на '💎'
 WILD_SYMBOL = '⭐'
 SCATTER_SYMBOL = '💰'
 ALL_REEL_SYMBOLS = SYMBOLS + [WILD_SYMBOL, SCATTER_SYMBOL]
@@ -65,18 +69,18 @@ XP_PER_SPIN = 10
 XP_PER_COIN_FLIP = 5 # XP за підкидання монетки
 XP_PER_WIN_MULTIPLIER = 2 
 LEVEL_THRESHOLDS = [
-    0,    # Level 1: 0 XP
-    100,  # Level 2: 100 XP
-    300,  # Level 3: 300 XP
-    600,  # Level 4: 600 XP
-    1000, # Level 5: 1000 XP
-    1500, # Level 6: 1500 XP
-    2200, # Level 7: 2200 XP
-    3000, # Level 8: 3000 XP
-    4000, # Level 9: 4000 XP
-    5500, # Level 10: 5500 XP
-    7500, # Level 11: 7500 XP
-    10000 # Level 12: 10000 XP (and beyond)
+    0,     # Level 1: 0 XP
+    100,   # Level 2: 100 XP
+    300,   # Level 3: 300 XP
+    600,   # Level 4: 600 XP
+    1000,  # Level 5: 1000 XP
+    1500,  # Level 6: 1500 XP
+    2200,  # Level 7: 2200 XP
+    3000,  # Level 8: 3000 XP
+    4000,  # Level 9: 4000 XP
+    5500,  # Level 10: 5500 XP
+    7500,  # Level 11: 7500 XP
+    10000  # Level 12: 10000 XP (and beyond)
 ]
 
 def get_level_from_xp(xp):
@@ -84,16 +88,18 @@ def get_level_from_xp(xp):
     for i, threshold in enumerate(LEVEL_THRESHOLDS):
         if xp < threshold:
             return i + 1 # Рівні починаються з 1, індекси з 0
-    return len(LEVEL_THRESHOLDS) # Максимальний рівень, якщо XP перевищує всі пороги
+    return len(LEVEL_THRESHOLDS) # Максимальний рівень, якщо XP перевищує всі пороги (наприклад, 12)
 
 def get_xp_for_next_level(level):
     """Повертає XP, необхідний для наступного рівня (або для поточного, якщо це останній)."""
-    if level < len(LEVEL_THRESHOLDS):
-        return LEVEL_THRESHOLDS[level] # Порог для наступного рівня
-    return LEVEL_THRESHOLDS[-1] # Якщо максимальний рівень, повертає останній поріг
+    # Якщо поточний рівень - останній можливий, то XP для наступного рівня - це просто поточний поріг
+    if level >= len(LEVEL_THRESHOLDS):
+        return LEVEL_THRESHOLDS[-1] 
+    return LEVEL_THRESHOLDS[level] # Порог для досягнення наступного рівня (level+1)
+
 
 PAYOUTS = {
-    # Три однакові (включаючи Wild, що діє як замінник)
+    # Три однакові символи (включаючи Wild як замінник)
     ('🍒', '🍒', '🍒'): 1000,
     ('🍋', '🍋', '🍋'): 800,
     ('🍊', '🍊', '🍊'): 600,
@@ -103,9 +109,15 @@ PAYOUTS = {
     ('🍀', '🍀', '🍀'): 150,
     ('⭐', '⭐', '⭐'): 2000, # Високий виграш за три Wild
     
-    # Дві однакові (включаючи Wild) - WILD може бути другим або третім
+    # Два однакові символи (включаючи Wild як замінник)
+    # Це базові виграші, якщо є тільки 2 символи
     ('🍒', '🍒'): 100,
     ('🍋', '🍋'): 80,
+    ('🍊', '🍊'): 60,
+    ('🍇', '🍇'): 40,
+    ('🔔', '🔔'): 30,
+    ('💎', '💎'): 20,
+    ('🍀', '🍀'): 10,
 
     # Scatter виграші (не залежать від позиції)
     ('💰', '💰'): 200, # За 2 Scatter
@@ -117,6 +129,9 @@ PAYOUTS = {
 def get_db_connection():
     """Створює та повертає з'єднання до бази даних PostgreSQL за URL."""
     conn = None
+    if not DATABASE_URL:
+        logger.error("Attempted to connect to DB, but DATABASE_URL is not set.")
+        raise ValueError("DATABASE_URL is not configured.")
     try:
         url = urllib.parse.urlparse(DATABASE_URL)
         conn = psycopg2.connect(
@@ -150,7 +165,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
                 username TEXT DEFAULT 'Unnamed Player',
-                balance INTEGER DEFAULT 1000,
+                balance INTEGER DEFAULT 10000, -- Початковий баланс 10000 фантиків
                 xp INTEGER DEFAULT 0,
                 level INTEGER DEFAULT 1,
                 last_free_coins_claim TIMESTAMP WITH TIME ZONE DEFAULT NULL,
@@ -161,6 +176,7 @@ def init_db():
         conn.commit()
         logger.info("Table 'users' initialized or already exists.")
 
+        # Міграції для додавання нових стовпців (якщо вони ще не існують)
         migrations_to_add = [
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT DEFAULT 'Unnamed Player';",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS xp INTEGER DEFAULT 0;",
@@ -176,8 +192,9 @@ def init_db():
                 conn.commit()
                 logger.info(f"Migration applied: {mig_sql.strip()}")
             except psycopg2.ProgrammingError as e:
-                logger.warning(f"Migration failed (might already exist or specific DB error): {e} -> {mig_sql}")
-                conn.rollback()
+                # Це нормально, якщо стовпець вже існує
+                logger.warning(f"Migration skipped/failed (might already exist or specific DB error): {e} -> {mig_sql.strip()}")
+                conn.rollback() # Rollback in case of error, but continue
 
         logger.info("DB schema migration checked.")
 
@@ -199,6 +216,7 @@ def get_user_data(user_id):
         )
         result = cursor.fetchone()
         if result:
+            # Ensure datetime objects are timezone-aware if they aren't already
             last_free_coins_claim_db = result[4]
             if last_free_coins_claim_db and last_free_coins_claim_db.tzinfo is None:
                 last_free_coins_claim_db = last_free_coins_claim_db.replace(tzinfo=timezone.utc)
@@ -221,14 +239,15 @@ def get_user_data(user_id):
                 'last_quick_bonus_claim': last_quick_bonus_claim_db
             }
         else:
+            # Initial creation of a new user
             cursor.execute(
                 'INSERT INTO users (user_id, username, balance, xp, level, last_free_coins_claim, last_daily_bonus_claim, last_quick_bonus_claim) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)', 
-                (user_id, 'Unnamed Player', 1000, 0, 1, None, None, None)
+                (user_id, 'Unnamed Player', 10000, 0, 1, None, None, None) # Start with 10000 coins
             )
             conn.commit()
             return {
                 'username': 'Unnamed Player',
-                'balance': 1000,
+                'balance': 10000,
                 'xp': 0,
                 'level': 1,
                 'last_free_coins_claim': None,
@@ -237,6 +256,7 @@ def get_user_data(user_id):
             }
     except Exception as e:
         logger.error(f"Error getting user data from PostgreSQL for {user_id}: {e}")
+        # Return default/error data to prevent app crash
         return {
             'username': 'Error Player', 'balance': 0, 'xp': 0, 'level': 1, 
             'last_free_coins_claim': None, 'last_daily_bonus_claim': None, 'last_quick_bonus_claim': None
@@ -252,11 +272,13 @@ def update_user_data(user_id, **kwargs):
         conn = get_db_connection()
         cursor = conn.cursor()
 
+        # Fetch current data to preserve fields not explicitly updated
         current_data_from_db = get_user_data(user_id) 
 
         update_fields_parts = []
         update_values = []
 
+        # Build fields to update, using kwargs or existing data
         fields_to_update = {
             'username': kwargs.get('username', current_data_from_db['username']),
             'balance': kwargs.get('balance', current_data_from_db['balance']),
@@ -266,6 +288,12 @@ def update_user_data(user_id, **kwargs):
             'last_daily_bonus_claim': kwargs.get('last_daily_bonus_claim', current_data_from_db['last_daily_bonus_claim']),
             'last_quick_bonus_claim': kwargs.get('last_quick_bonus_claim', current_data_from_db['last_quick_bonus_claim'])
         }
+        
+        # Ensure timestamps are timezone-aware if updated
+        for key in ['last_free_coins_claim', 'last_daily_bonus_claim', 'last_quick_bonus_claim']:
+            if fields_to_update[key] and fields_to_update[key].tzinfo is None:
+                fields_to_update[key] = fields_to_update[key].replace(tzinfo=timezone.utc)
+
 
         for field, value in fields_to_update.items():
             update_fields_parts.append(sql.SQL("{} = %s").format(sql.Identifier(field)))
@@ -292,52 +320,57 @@ def update_user_data(user_id, **kwargs):
 
 
 def check_win_conditions(symbols):
-    """Перевіряє виграшні комбінації, враховуючи Wild та Scatter."""
+    """Перевіряє виграшні комбінації для 3-барабанного слота, враховуючи Wild та Scatter."""
     winnings = 0
     s1, s2, s3 = symbols
 
+    # 1. Перевірка Scatter символів (виплачуються незалежно від позиції)
     scatter_count = symbols.count(SCATTER_SYMBOL)
-    if scatter_count >= 2:
-        return PAYOUTS.get(tuple([SCATTER_SYMBOL] * scatter_count), 0)
+    if scatter_count == 3:
+        return PAYOUTS.get((SCATTER_SYMBOL, SCATTER_SYMBOL, SCATTER_SYMBOL), 0)
+    elif scatter_count == 2:
+        return PAYOUTS.get((SCATTER_SYMBOL, SCATTER_SYMBOL), 0)
 
+    # 2. Перевірка 3-х Wild символів (найвищий виграш)
     if s1 == WILD_SYMBOL and s2 == WILD_SYMBOL and s3 == WILD_SYMBOL:
         return PAYOUTS.get(('⭐', '⭐', '⭐'), 0)
 
-    for main_symbol in SYMBOLS:
-        current_match_count = 0
-        if s1 == main_symbol or s1 == WILD_SYMBOL: current_match_count += 1
-        if s2 == main_symbol or s2 == WILD_SYMBOL: current_match_count += 1
-        if s3 == main_symbol or s3 == WILD_SYMBOL: current_match_count += 1
-
-        if current_match_count == 3:
-            return PAYOUTS.get((main_symbol, main_symbol, main_symbol), 0)
-
-    for main_symbol in SYMBOLS:
-        # Check for 2 matching symbols (including wild) and 1 non-matching/non-wild/non-scatter
-        # s1, s2 matching, s3 not
-        if ((s1 == main_symbol or s1 == WILD_SYMBOL) and 
-            (s2 == main_symbol or s2 == WILD_SYMBOL) and
-            (s3 not in [main_symbol, WILD_SYMBOL, SCATTER_SYMBOL])):
-            return PAYOUTS.get((main_symbol, main_symbol), 0)
+    # 3. Перевірка 3-х однакових символів (або з Wild як замінником)
+    # Створюємо комбінації, де Wild діє як будь-який інший символ
+    # Генеруємо всі можливі інтерпретації символів, де ⭐ є будь-яким символом з SYMBOLS
+    possible_effective_symbols = []
+    
+    # Simple case for 3 reels: iterate through all possible base symbols and see if they match
+    for base_symbol in SYMBOLS:
+        match_count = 0
+        if s1 == base_symbol or s1 == WILD_SYMBOL:
+            match_count += 1
+        if s2 == base_symbol or s2 == WILD_SYMBOL:
+            match_count += 1
+        if s3 == base_symbol or s3 == WILD_SYMBOL:
+            match_count += 1
         
-        # s1, s3 matching, s2 not
-        if ((s1 == main_symbol or s1 == WILD_SYMBOL) and 
-            (s3 == main_symbol or s3 == WILD_SYMBOL) and
-            (s2 not in [main_symbol, WILD_SYMBOL, SCATTER_SYMBOL])):
-            return PAYOUTS.get((main_symbol, main_symbol), 0)
-        
-        # s2, s3 matching, s1 not
-        if ((s2 == main_symbol or s2 == WILD_SYMBOL) and 
-            (s3 == main_symbol or s3 == WILD_SYMBOL) and
-            (s1 not in [main_symbol, WILD_SYMBOL, SCATTER_SYMBOL])):
-            return PAYOUTS.get((main_symbol, main_symbol), 0)
-            
-    return winnings
+        if match_count == 3:
+            # Found 3 matching, so return payout for that symbol
+            return PAYOUTS.get(tuple([base_symbol] * 3), 0)
+    
+    # 4. Перевірка 2-х однакових символів (або з Wild як замінником) на перших 2 позиціях
+    # Якщо ви хочете виплати за 2 символи, вони зазвичай мають бути на перших барабанах (ліворуч)
+    for base_symbol in SYMBOLS:
+        if (s1 == base_symbol or s1 == WILD_SYMBOL) and \
+           (s2 == base_symbol or s2 == WILD_SYMBOL):
+            # Перевіряємо, чи третій символ не є цим же символом (тоді це вже 3-в-ряд)
+            # і не є скаттером. Якщо він не заважає, це виграш 2-в-ряд.
+            if not (s3 == base_symbol or s3 == WILD_SYMBOL or s3 == SCATTER_SYMBOL):
+                 return PAYOUTS.get((base_symbol, base_symbol), 0) # Повертаємо виграш за 2 символи
+    
+    return winnings # Повертаємо 0, якщо немає виграшних комбінацій
 
 def spin_slot(user_id):
     user_data = get_user_data(user_id)
     current_balance = user_data['balance']
     current_xp = user_data['xp']
+    current_level = user_data['level']
 
     if current_balance < BET_AMOUNT:
         logger.info(f"User {user_id} tried to spin with insufficient balance: {current_balance}.")
@@ -350,21 +383,21 @@ def spin_slot(user_id):
     xp_gained = XP_PER_SPIN
     if winnings > 0:
         xp_gained += (XP_PER_SPIN * XP_PER_WIN_MULTIPLIER)
-        logger.info(f"User {user_id} won {winnings}.")
+        logger.info(f"User {user_id} won {winnings} with symbols {result_symbols}. Gained {xp_gained} XP.")
     else:
-        logger.info(f"User {user_id} lost on spin. Symbols: {result_symbols}")
+        logger.info(f"User {user_id} lost on spin. Symbols: {result_symbols}. Gained {xp_gained} XP.")
     
     new_xp = current_xp + xp_gained
     new_level = get_level_from_xp(new_xp)
 
     update_user_data(user_id, balance=new_balance, xp=new_xp, level=new_level)
 
-    final_user_data = get_user_data(user_id)
+    final_user_data = get_user_data(user_id) # Fetch updated data to ensure consistency
     
     return {
         'symbols': result_symbols,
         'winnings': winnings,
-        'new_balance': final_user_data['balance'],
+        'balance': final_user_data['balance'],
         'xp': final_user_data['xp'],
         'level': final_user_data['level'],
         'next_level_xp': get_xp_for_next_level(final_user_data['level'])
@@ -380,34 +413,40 @@ def coin_flip_game(user_id, choice):
     user_data = get_user_data(user_id)
     current_balance = user_data['balance']
     current_xp = user_data['xp']
+    current_level = user_data['level']
+
 
     if current_balance < COIN_FLIP_BET_AMOUNT:
         logger.info(f"User {user_id} tried to coin flip with insufficient balance: {current_balance}.")
         return {'error': 'Недостатньо коштів для підкидання монетки!'}, current_balance
 
-    result = random.choice(['heads', 'tails'])
+    coin_result = random.choice(['heads', 'tails'])
     winnings = 0
+    message = ""
 
-    if choice == result:
+    new_balance = current_balance - COIN_FLIP_BET_AMOUNT # Спершу віднімаємо ставку
+    xp_gained = XP_PER_COIN_FLIP
+
+    if choice == coin_result:
         winnings = COIN_FLIP_BET_AMOUNT * 2 # Подвоюємо ставку
+        new_balance += winnings # Додаємо виграш
         message = f"🎉 Вітаємо! Випало {result}! Ви виграли {winnings} фантиків!"
-        xp_gained = XP_PER_COIN_FLIP * XP_PER_WIN_MULTIPLIER
+        xp_gained += (XP_PER_COIN_FLIP * XP_PER_WIN_MULTIPLIER) # Додатковий XP за виграш
     else:
         message = f"😢 На жаль, випало {result}. Спробуйте ще раз!"
-        xp_gained = XP_PER_COIN_FLIP
-    
-    new_balance = current_balance - COIN_FLIP_BET_AMOUNT + winnings
+        # xp_gained remains XP_PER_COIN_FLIP
+
     new_xp = current_xp + xp_gained
     new_level = get_level_from_xp(new_xp)
 
     update_user_data(user_id, balance=new_balance, xp=new_xp, level=new_level)
 
-    final_user_data = get_user_data(user_id)
+    final_user_data = get_user_data(user_id) # Fetch updated data for consistency
 
     return {
-        'result': result,
+        'result': coin_result, # Changed from 'result' to 'coin_result' for clarity
         'winnings': winnings,
-        'new_balance': final_user_data['balance'],
+        'balance': final_user_data['balance'],
         'message': message,
         'xp': final_user_data['xp'],
         'level': final_user_data['level'],
@@ -420,24 +459,36 @@ def coin_flip_game(user_id, choice):
 @dp.message(CommandStart())
 async def send_welcome(message: Message):
     user_id = message.from_user.id
-    init_db()
-    user_data = get_user_data(user_id)
-    if message.from_user.username:
-        update_user_data(user_id, username=message.from_user.username)
-    elif message.from_user.first_name:
-        update_user_data(user_id, username=message.from_user.first_name)
+    # It's good to ensure DB is initialized on startup, but also on first user interaction
+    init_db() 
+    
+    user_data = get_user_data(user_id) # Get user data to ensure record exists
+    
+    # Update username from Telegram data if available
+    telegram_username = message.from_user.username
+    telegram_first_name = message.from_user.first_name
+    
+    if telegram_username:
+        if user_data['username'] != telegram_username:
+            update_user_data(user_id, username=telegram_username)
+            user_data['username'] = telegram_username # Update local dict
+    elif telegram_first_name and user_data['username'] == 'Unnamed Player': # Only update if it's default
+        update_user_data(user_id, username=telegram_first_name)
+        user_data['username'] = telegram_first_name # Update local dict
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎰 Відкрити Слот-Казино 🎰", web_app=WebAppInfo(url=WEB_APP_URL))]
     ])
 
     await message.reply(
-        f"Привіт, {message.from_user.first_name if message.from_user.first_name else 'гравець'}!\n"
+        f"Привіт, {user_data['username']}!\n" # Use updated username
         f"Ласкаво просимо до віртуального Слот-Казино!\n"
         f"Ваш поточний баланс: {user_data['balance']} фантиків.\n"
         f"Натисніть кнопку нижче, щоб почати грати!",
         reply_markup=keyboard
     )
+    logger.info(f"User {user_id} ({user_data['username']}) started the bot. Balance: {user_data['balance']}.")
+
 
 @dp.message(Command("add_balance"))
 async def add_balance_command(message: Message):
@@ -477,7 +528,7 @@ async def get_free_coins_command(message: Message):
     user_data = get_user_data(user_id)
     last_claim_time = user_data['last_free_coins_claim']
 
-    current_time = datetime.now(timezone.utc)
+    current_time = datetime.now(timezone.utc) # Use timezone.utc for consistency
 
     cooldown_duration = timedelta(hours=COOLDOWN_HOURS)
 
@@ -508,17 +559,18 @@ async def web_app_data_handler(message: Message):
     
     logger.info(f"Received data from WebApp for user {user_id}: {data_from_webapp}")
 
+    # For debugging, you can enable specific log types to be sent to chat
     if data_from_webapp.startswith('JS_VERY_FIRST_LOG:'):
-        # Відправка логів в чат, щоб користувач бачив, що скрипт працює
         await message.answer(f"✅ WebApp Core Log: {data_from_webapp.replace('JS_VERY_FIRST_LOG:', '').strip()}")
-    elif data_from_webapp.startswith('JS_LOG:'):
-        pass # Не надсилаємо всі JS_LOGs в чат, щоб не засмічувати його
-    elif data_from_webapp.startswith('JS_DEBUG:'):
-        pass # Не надсилаємо всі JS_DEBUGs в чат
     elif data_from_webapp.startswith('JS_ERROR:'):
         await message.answer(f"❌ WebApp Error: {data_from_webapp.replace('JS_ERROR:', '').strip()}")
+    # Removed JS_LOG and JS_DEBUG from sending to chat to avoid spamming user
+    # elif data_from_webapp.startswith('JS_LOG:'):
+    #     pass 
+    # elif data_from_webapp.startswith('JS_DEBUG:'):
+    #     pass 
     else:
-        pass # Для невідомих типів даних
+        pass # For unknown data types or other unhandled messages
 
 
 # --- Обробка запитів від Web App (через aiohttp.web) ---
@@ -526,25 +578,27 @@ async def web_app_data_handler(message: Message):
 async def api_get_balance(request: Request):
     data = await request.json()
     user_id = data.get('user_id')
-    username = data.get('username', 'Unnamed Player')
+    username = data.get('username', 'Unnamed Player') # Username from frontend
 
     if not user_id:
         logger.warning("api_get_balance: User ID is missing in request.")
         return json_response({'error': 'User ID is required'}, status=400)
     
     current_user_data = get_user_data(user_id)
-    if current_user_data['username'] == 'Unnamed Player' or (username and current_user_data['username'] != username):
-         update_user_data(user_id, username=username)
+    
+    # Update username in DB if it changed or is still default
+    if username and current_user_data['username'] != username and username != 'Unnamed Player':
+        update_user_data(user_id, username=username)
+        current_user_data['username'] = username # Update local dict for response consistency
 
-    user_data = get_user_data(user_id)
     return json_response({
-        'balance': user_data['balance'],
-        'xp': user_data['xp'],
-        'level': user_data['level'],
-        'next_level_xp': get_xp_for_next_level(user_data['level']),
-        'last_free_coins_claim': user_data['last_free_coins_claim'].isoformat() if user_data['last_free_coins_claim'] else None,
-        'last_daily_bonus_claim': user_data['last_daily_bonus_claim'].isoformat() if user_data['last_daily_bonus_claim'] else None,
-        'last_quick_bonus_claim': user_data['last_quick_bonus_claim'].isoformat() if user_data['last_quick_bonus_claim'] else None
+        'balance': current_user_data['balance'],
+        'xp': current_user_data['xp'],
+        'level': current_user_data['level'],
+        'next_level_xp': get_xp_for_next_level(current_user_data['level']),
+        'last_free_coins_claim': current_user_data['last_free_coins_claim'].isoformat() if current_user_data['last_free_coins_claim'] else None,
+        'last_daily_bonus_claim': current_user_data['last_daily_bonus_claim'].isoformat() if current_user_data['last_daily_bonus_claim'] else None,
+        'last_quick_bonus_claim': current_user_data['last_quick_bonus_claim'].isoformat() if current_user_data['last_quick_bonus_claim'] else None
     })
 
 async def api_spin(request: Request):
@@ -596,19 +650,13 @@ async def api_claim_daily_bonus(request: Request):
 
     if last_claim_time and (current_time - last_claim_time) < cooldown_duration:
         time_left = cooldown_duration - (current_time - last_claim_time)
-        minutes = int(time_left.total_seconds() // 60)
+        hours = int(time_left.total_seconds() // 3600)
+        minutes = int((time_left.total_seconds() % 3600) // 60)
         seconds = int(time_left.total_seconds() % 60)
-        if time_left.total_seconds() >= 3600:
-            hours = int(time_left.total_seconds() // 3600)
-            return json_response(
-                {'error': f"Будь ласка, зачекайте {hours:02d}:{minutes:02d}:{seconds:02d} до наступного бонусу."}, 
-                status=403
-            )
-        else:
-            return json_response(
-                {'error': f"Будь ласка, зачекайте {minutes:02d}:{seconds:02d} до наступного бонусу."}, 
-                status=403
-            )
+        return json_response(
+            {'error': f"Будь ласка, зачекайте {hours:02d}:{minutes:02d}:{seconds:02d} до наступного бонусу."}, 
+            status=403
+        )
     else:
         new_balance = user_data['balance'] + DAILY_BONUS_AMOUNT
         update_user_data(user_id, balance=new_balance, last_daily_bonus_claim=current_time)
@@ -647,25 +695,26 @@ async def api_get_leaderboard(request: Request):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        # Order by level DESC, then by xp DESC, then by balance DESC
         cursor.execute(
-            'SELECT username, level, balance, xp, user_id FROM users ORDER BY xp DESC, balance DESC LIMIT 100;'
+            'SELECT username, level, balance, xp, user_id FROM users ORDER BY level DESC, xp DESC, balance DESC LIMIT 100;'
         )
         results = cursor.fetchall()
         leaderboard = []
         for row in results:
-            username = row[0] # Початкове ім'я користувача
-            user_id_suffix = str(row[4])[-4:] # Останні 4 цифри User ID
+            username = row[0] # Original username from DB
+            user_id_suffix = str(row[4])[-4:] # Last 4 digits of User ID
 
-            # Логіка для відображення імені:
-            # Якщо ім'я "Unnamed Player", використовуємо "Гравець XXXX"
-            # Інакше використовуємо фактичний username з бази даних
+            # Logic to display name:
+            # If name is 'Unnamed Player', use 'Гравець XXXX'
+            # Otherwise use the actual username from the database
             if username == 'Unnamed Player':
                 display_username = f"Гравець {user_id_suffix}"
             else:
-                display_username = username # Використовуємо фактичний username
+                display_username = username # Use actual username
 
             leaderboard.append({
-                'username': display_username, # Використовуємо display_username
+                'username': display_username, # Use display_username
                 'level': row[1],
                 'balance': row[2],
                 'xp': row[3]
@@ -684,7 +733,12 @@ async def api_get_leaderboard(request: Request):
 async def on_startup_webhook(web_app: Application):
     """Викликається при запуску Aiohttp веб-сервера."""
     logger.warning('Starting bot and webhook...')
-    init_db()
+    try:
+        init_db() # Ensure DB is initialized on startup
+    except Exception as e:
+        logger.critical(f"Failed to initialize database on startup: {e}")
+        # Depending on severity, you might want to exit here or log more severely
+    
     await bot.set_webhook(WEBHOOK_URL)
     logger.info(f"Webhook set to: {WEBHOOK_URL}")
 
@@ -699,12 +753,14 @@ app_aiohttp = Application()
 # Реєстрація API ендпоінтів для Web App (ПЕРЕД CORS)
 app_aiohttp.router.add_post('/api/get_balance', api_get_balance, name='api_get_balance')
 app_aiohttp.router.add_post('/api/spin', api_spin, name='api_spin')
-app_aiohttp.router.add_post('/api/coin_flip', api_coin_flip, name='api_coin_flip') # Новий ендпоінт
+app_aiohttp.router.add_post('/api/coin_flip', api_coin_flip, name='api_coin_flip') 
 app_aiohttp.router.add_post('/api/claim_daily_bonus', api_claim_daily_bonus, name='api_claim_daily_bonus')
 app_aiohttp.router.add_post('/api/claim_quick_bonus', api_claim_quick_bonus, name='api_claim_quick_bonus')
 app_aiohttp.router.add_post('/api/get_leaderboard', api_get_leaderboard, name='api_get_leaderboard')
 
 # Налаштовуємо CORS для дозволу запитів з Web App URL
+# !!! ВАЖЛИВО: WEB_APP_URL має бути АКТУАЛЬНИМ URL ВАШОГО STATIC SITE на Render.com !!!
+# Це те саме значення, що й WEB_APP_FRONTEND_URL в змінних середовища.
 cors = aiohttp_cors.setup(app_aiohttp, defaults={
     WEB_APP_URL: aiohttp_cors.ResourceOptions(
         allow_credentials=True,
@@ -730,4 +786,11 @@ app_aiohttp.on_startup.append(on_startup_webhook)
 app_aiohttp.on_shutdown.append(on_shutdown_webhook)
 
 if __name__ == '__main__':
-    pass
+    # Flask-подібний запуск (для локальної розробки)
+    # Цей блок не використовується на Render, оскільки Render запускає Gunicorn/Hypercorn
+    # Але це корисно для локального тестування
+    from aiohttp import web
+    port = int(os.environ.get('PORT', 8080)) # Використовуємо 8080 для aiohttp за замовчуванням
+    logger.info(f"Starting Aiohttp web server on port {port}")
+    web.run_app(app_aiohttp, port=port)
+

@@ -67,7 +67,9 @@
             const [error, setError] = useState(null);
 
             // Backend API URL (ВАШ АКТУАЛЬНИЙ URL!)
-            const API_BASE_URL = 'https://casino-0h0l.onrender.com'; // ЗМІНІТЬ ЦЕЙ URL!
+            // !!! ВСТАВТЕ СЮДИ АКТУАЛЬНИЙ URL ВАШОГО WEB SERVICE (БОТА) НА RENDER.COM !!!
+            // НАПРИКЛАД: 'https://ваш-унікальний-домен.onrender.com'
+            const API_BASE_URL = 'https://casino-0h0l.onrender.com'; // <--- ЗМІНІТЬ ЦЕЙ РЯДОК!
 
             // Helper to send logs to Telegram bot for debugging
             const sendTelegramLog = useCallback((message, type = 'JS_LOG') => {
@@ -159,14 +161,12 @@
                 } finally {
                     setIsLoading(false);
                 }
-            }, [sendTelegramLog, API_BASE_URL]); // Add API_BASE_URL to dependencies
+            }, [sendTelegramLog, API_BASE_URL]);
 
 
             useEffect(() => {
-                // This useEffect runs after initial render and when fetchUserData changes
-                // Call fetchUserData directly.
                 fetchUserData(); 
-            }, [fetchUserData]); // Dependency array to prevent infinite loop
+            }, [fetchUserData]);
 
             return (
                 <UserContext.Provider value={{ user, setUser, fetchUserData, isLoading, error, API_BASE_URL, sendTelegramLog }}>
@@ -270,7 +270,7 @@
         // -----------------------------------------------------------------------------
         // Slot Machine Game Component
         // -----------------------------------------------------------------------------
-        const SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀'];
+        const SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '�', '🍀'];
         const WILD_SYMBOL = '⭐';
         const SCATTER_SYMBOL = '💰';
         const ALL_REEL_SYMBOLS = [...SYMBOLS, WILD_SYMBOL, SCATTER_SYMBOL];
