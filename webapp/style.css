@@ -4,7 +4,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800;900&display=swap');
 
 /* Base Body Styles */
-html, body {
+html, body, #root {
     font-family: 'Inter', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -15,13 +15,12 @@ html, body {
     overflow: hidden; /* Prevent body scroll, the main container will manage overflow */
 }
 
-/* Main App Container - takes full screen, no outer frame/shadow */
-.casino-app-container {
-    /* Tailwind classes: w-full h-full flex flex-col items-center justify-start */
-    background: none; /* No specific background, use body's gradient */
-    border-radius: 0; /* No rounded corners */
-    box-shadow: none; /* No shadow */
-    padding: 0; /* No padding */
+/* Root App Container - takes full screen, no outer frame/shadow */
+#root {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between; /* Adjusted for header/footer */
 }
 
 /* Header Bar at the top */
@@ -29,91 +28,69 @@ html, body {
     /* Tailwind classes: w-full h-16 bg-gradient-to-b from-yellow-700 to-yellow-900 shadow-lg ... */
     flex-shrink: 0; /* Prevent header from shrinking */
     position: relative; /* For absolute positioning of buttons */
+    /* Add padding-bottom to account for the balance-area hanging below it */
+    padding-bottom: 3.5rem; /* Height of balance-area + some margin */
 }
 
 /* Quick Bonus Button styling */
 .quick-bonus-button {
     /* Tailwind classes: absolute left-2 md:left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-blue-600 ... */
     box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-    overflow: hidden; /* **CHANGE**: Set to hidden to contain timer inside or just on the edge */
-    position: relative; /* Ensure timer is positioned relative to this button */
+    overflow: hidden; 
+    position: relative; 
 }
 
 /* Quick Bonus Countdown text - smaller, just numbers */
 .quick-bonus-countdown {
-    /* Adjusted positioning to be inside the button, centered at bottom or top-right corner */
     position: absolute;
-    bottom: 0px; /* Position at the very bottom inside the button */
+    bottom: 0px; 
     left: 0;
-    right: 0; /* Span full width to center text */
-    text-align: center; /* Center the text */
-    background-color: rgba(0,0,0,0.7); /* Darker background for contrast */
+    right: 0; 
+    text-align: center; 
+    background-color: rgba(0,0,0,0.7); 
     color: white;
-    font-size: 0.6rem; /* Зменшений розмір шрифту */
+    font-size: 0.6rem; 
     font-weight: bold;
-    padding: 1px 0px; /* Minimal padding, no horizontal padding */
-    border-radius: 0 0 9999px 9999px; /* Rounded bottom only */
-    white-space: nowrap; /* Prevent countdown from wrapping */
+    padding: 1px 0px; 
+    border-radius: 0 0 9999px 9999px; 
+    white-space: nowrap; 
     opacity: 0;
     transition: opacity 0.2s ease;
     pointer-events: none;
-    min-width: unset; /* Remove min-width */
-    line-height: 1.2; /* Adjust line height to fit */
+    min-width: unset; 
+    line-height: 1.2; 
 }
 .quick-bonus-button.active-countdown .quick-bonus-countdown {
-    opacity: 1; /* Show when countdown is active */
+    opacity: 1; 
 }
 
 /* Leaderboard Button styling */
 .leaderboard-button {
-    /* Tailwind classes: absolute right-2 md:right-4 top-1/2 -translate-y-1/2 bg-yellow-500 ... */
     box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-    /* Make it round and remove text */
-    width: 48px; /* Same as quick bonus button */
-    height: 48px; /* Same as quick bonus button */
-    padding: 0; /* Remove padding from icon-only button */
+    width: 48px; 
+    height: 48px; 
+    padding: 0; 
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 1.5rem; /* Larger font for icon */
-    line-height: 1; /* Adjust line height for single icon */
+    font-size: 1.5rem; 
+    line-height: 1; 
 }
 
-/* Main Game Content Area - this is the flexible area that holds all game elements */
-.game-content-fixed {
-    /* Tailwind classes: flex-grow flex flex-col items-center justify-around p-4 md:p-8 w-full */
-    overflow-y: hidden; /* Prevent scrolling here */
-    justify-content: space-around; /* Distribute space evenly */
-    padding-top: 1rem; /* Adjust padding to avoid header overlap */
-    padding-bottom: 1rem; /* Adjust padding to avoid bottom overlap */
-}
-
-
-/* Heading H1 */
-h1 {
-    /* Tailwind handles text-size, font-weight, color, margin, drop-shadow */
-    line-height: 1.2;
-    margin-top: 0; /* Adjust top margin for fitting */
-    margin-bottom: 0.5rem; /* Reduced margin */
-}
-
-/* Balance Display */
+/* Balance Display - now positioned absolutely below the header */
 .balance-area {
-    /* Tailwind handles flex, justify, align, rounded, padding, margin, shadow, border */
-    width: 95%; /* Make it responsive, slightly wider */
-    max-width: 420px; /* Adjusted max width */
-    padding: 0.75rem 1rem; /* Slightly reduced padding */
-    margin-bottom: 0.75rem; /* Reduced margin */
+    width: 95%; 
+    max-width: 420px; 
+    padding: 0.75rem 1rem; 
+    box-shadow: inset 0 0 15px rgba(0,0,0,0.7), 0 0 20px rgba(255,204,0,0.5); /* Glowing effect */
 }
 
 /* XP Bar Styling */
 .xp-bar {
-    /* Tailwind handles width, bg, rounded, height */
-    overflow: hidden; /* Ensure progress bar stays within bounds */
+    overflow: hidden; 
 }
 #xpProgressBar {
-    /* Tailwind handles height, bg, rounded, transition */
-    transform-origin: left; /* Ensure animation grows from left */
+    transform-origin: left; 
 }
 /* Animation for balance update */
 @keyframes pulse-balance {
@@ -122,32 +99,30 @@ h1 {
     100% { transform: scale(1); opacity: 1; }
 }
 .animate-pulse-balance {
-    animation: pulse-balance 0.5s ease-out; /* Apply this class via JS */
+    animation: pulse-balance 0.5s ease-out; 
 }
 
 /* Slot Machine Reels Container */
 .slot-machine {
-    /* Tailwind handles flex, justify, gap, margin, width, max-width, mx-auto */
-    perspective: 800px; /* Stronger 3D perspective for reel animations */
-    background-color: #0d0d1a; /* Darker background for reels section */
+    perspective: 800px; 
+    background-color: #0d0d1a; 
     border-radius: 12px;
-    padding: 8px 4px; /* Reduced padding */
+    padding: 8px 4px; 
     box-shadow: inset 0 0 15px rgba(0,0,0,0.7), 0 0 20px rgba(255,204,0,0.5);
-    width: 95%; /* Responsive width */
-    max-width: 400px; /* Max width for larger screens */
-    margin-bottom: 0.75rem; /* Reduced margin */
+    width: 95%; 
+    max-width: 400px; 
+    margin-bottom: 0.75rem; 
 }
 
 /* Individual Reel Styling */
 .reel {
-    /* Tailwind handles width, height, rounded, background, border, overflow, shadow, transform-gpu */
     position: relative;
-    display: flex; /* Flexbox for centering inner content */
+    display: flex; 
     align-items: center;
     justify-content: center;
-    box-shadow: inset 0 0 15px rgba(0,0,0,0.5), 0 0 10px rgba(255,204,0,0.3); /* Inner and outer glow */
+    box-shadow: inset 0 0 15px rgba(0,0,0,0.5), 0 0 10px rgba(255,204,0,0.3); 
     border-radius: 8px;
-    transition: filter 0.1s ease-out; /* For quick blur changes */
+    transition: filter 0.1s ease-out; 
     width: 22vw;
     height: 22vw;
     max-width: 100px;
@@ -160,10 +135,10 @@ h1 {
     display: flex;
     flex-direction: column;
     align-items: center;
-    justify-content: flex-start; /* Start from top for animation */
+    justify-content: flex-start; 
     width: 100%;
-    height: auto; /* Height will be dynamically set by JS */
-    transform: translateY(0); /* Controlled by GSAP */
+    height: auto; 
+    transform: translateY(0); 
 }
 
 /* Individual Symbol within the reel */
@@ -171,7 +146,7 @@ h1 {
     font-family: 'Inter', sans-serif;
     font-size: 3em;
     font-weight: 800;
-    height: 90px; /* Adjusted fixed height for each symbol for animation calculation */
+    height: 90px; 
     line-height: 1;
     display: flex;
     align-items: center;
@@ -236,7 +211,7 @@ h1 {
     max-width: 450px;
     flex-wrap: wrap;
     justify-content: center;
-    margin-bottom: 0.75rem; /* Reduced margin */
+    margin-bottom: 0.75rem; 
 }
 @media (min-width: 768px) {
     .game-controls {
@@ -379,4 +354,54 @@ button.pulsing {
         font-size: 0.75rem;
         padding: 0.3rem 0.5rem;
     }
+}
+
+/* New Coin Flip specific styles */
+.coin-display {
+    width: 150px;
+    height: 150px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background-color: #ffd700; /* Gold coin color */
+    color: #4a4a4a; /* Dark text for coin */
+    box-shadow: 0 5px 15px rgba(0,0,0,0.5), inset 0 0 10px rgba(255,255,255,0.5);
+}
+
+/* 3D spin animation for coin */
+@keyframes spin-3d {
+    0% { transform: rotateY(0deg); }
+    100% { transform: rotateY(1080deg); /* 3 full spins */ }
+}
+
+.animate-spin-3d {
+    animation: spin-3d 1.5s cubic-bezier(0.25, 0.46, 0.45, 0.94) forwards; /* Ease-out cubic-bezier */
+}
+
+/* Bottom Navigation */
+.bottom-nav {
+    border-top-left-radius: 20px;
+    border-top-right-radius: 20px;
+    padding-left: 1rem;
+    padding-right: 1rem;
+    box-shadow: 0 -5px 15px rgba(0,0,0,0.5);
+    z-index: 30; /* Ensure it's above other content */
+}
+.nav-button {
+    background-color: transparent;
+    border: none;
+    cursor: pointer;
+    outline: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 50px; /* Ensure sufficient touch target */
+    min-height: 50px;
+    font-size: 1.8rem; /* Larger icon size */
+}
+
+/* Override existing button pulsing for nav buttons, if desired */
+.nav-button.pulsing {
+    animation: none; /* No pulsing on nav buttons */
 }

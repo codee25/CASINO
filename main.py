@@ -43,12 +43,14 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher()
 
 # --- Конфігурація гри (збігається з JS фронтендом) ---
-SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀']
+SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '�', '🍀']
 WILD_SYMBOL = '⭐'
 SCATTER_SYMBOL = '💰'
 ALL_REEL_SYMBOLS = SYMBOLS + [WILD_SYMBOL, SCATTER_SYMBOL]
 
-BET_AMOUNT = 100
+BET_AMOUNT = 100 # Ставка для слотів
+COIN_FLIP_BET_AMOUNT = 50 # Ставка для підкидання монетки
+
 FREE_COINS_AMOUNT = 500 # Кількість фантиків для /get_coins
 COOLDOWN_HOURS = 24 # Затримка в годинах для /get_coins
 
@@ -60,6 +62,7 @@ QUICK_BONUS_COOLDOWN_MINUTES = 15
 
 # XP та Рівні
 XP_PER_SPIN = 10
+XP_PER_COIN_FLIP = 5 # XP за підкидання монетки
 XP_PER_WIN_MULTIPLIER = 2 
 LEVEL_THRESHOLDS = [
     0,    # Level 1: 0 XP
@@ -367,6 +370,50 @@ def spin_slot(user_id):
         'next_level_xp': get_xp_for_next_level(final_user_data['level'])
     }, final_user_data['balance']
 
+def coin_flip_game(user_id, choice):
+    """
+    Логіка гри "Підкидання монетки".
+    :param user_id: ID користувача.
+    :param choice: Вибір користувача ('heads' або 'tails').
+    :return: Результат гри (виграш, новий баланс тощо).
+    """
+    user_data = get_user_data(user_id)
+    current_balance = user_data['balance']
+    current_xp = user_data['xp']
+
+    if current_balance < COIN_FLIP_BET_AMOUNT:
+        logger.info(f"User {user_id} tried to coin flip with insufficient balance: {current_balance}.")
+        return {'error': 'Недостатньо коштів для підкидання монетки!'}, current_balance
+
+    result = random.choice(['heads', 'tails'])
+    winnings = 0
+
+    if choice == result:
+        winnings = COIN_FLIP_BET_AMOUNT * 2 # Подвоюємо ставку
+        message = f"🎉 Вітаємо! Випало {result}! Ви виграли {winnings} фантиків!"
+        xp_gained = XP_PER_COIN_FLIP * XP_PER_WIN_MULTIPLIER
+    else:
+        message = f"😢 На жаль, випало {result}. Спробуйте ще раз!"
+        xp_gained = XP_PER_COIN_FLIP
+    
+    new_balance = current_balance - COIN_FLIP_BET_AMOUNT + winnings
+    new_xp = current_xp + xp_gained
+    new_level = get_level_from_xp(new_xp)
+
+    update_user_data(user_id, balance=new_balance, xp=new_xp, level=new_level)
+
+    final_user_data = get_user_data(user_id)
+
+    return {
+        'result': result,
+        'winnings': winnings,
+        'new_balance': final_user_data['balance'],
+        'message': message,
+        'xp': final_user_data['xp'],
+        'level': final_user_data['level'],
+        'next_level_xp': get_xp_for_next_level(final_user_data['level'])
+    }, final_user_data['balance']
+
 
 # --- Обробники Telegram-бота (aiogram v3 синтаксис) ---
 
@@ -459,25 +506,19 @@ async def web_app_data_handler(message: Message):
     user_id = message.from_user.id
     data_from_webapp = message.web_app_data.data
     
-    # Відправляє логи в чат користувачу, але також логує їх на Render.com
     logger.info(f"Received data from WebApp for user {user_id}: {data_from_webapp}")
 
     if data_from_webapp.startswith('JS_VERY_FIRST_LOG:'):
+        # Відправка логів в чат, щоб користувач бачив, що скрипт працює
         await message.answer(f"✅ WebApp Core Log: {data_from_webapp.replace('JS_VERY_FIRST_LOG:', '').strip()}")
     elif data_from_webapp.startswith('JS_LOG:'):
-        # Можна не надсилати всі JS_LOGs в чат, щоб не засмічувати його
-        # await message.answer(f"➡️ WebApp Log: {data_from_webapp.replace('JS_LOG:', '').strip()}")
-        pass # Ми все одно бачимо їх у логах Render
+        pass # Не надсилаємо всі JS_LOGs в чат, щоб не засмічувати його
     elif data_from_webapp.startswith('JS_DEBUG:'):
-        # Можна не надсилати всі JS_DEBUGs в чат, щоб не засмічувати його
-        # await message.answer(f"🔍 WebApp Debug: {data_from_webapp.replace('JS_DEBUG:', '').strip()}")
-        pass # Ми все одно бачимо їх у логах Render
+        pass # Не надсилаємо всі JS_DEBUGs в чат
     elif data_from_webapp.startswith('JS_ERROR:'):
         await message.answer(f"❌ WebApp Error: {data_from_webapp.replace('JS_ERROR:', '').strip()}")
     else:
-        # Для невідомих типів даних
-        # await message.answer(f"Отримано невідомі дані з Web App: {data_from_webapp}")
-        pass # Ми все одно бачимо їх у логах Render
+        pass # Для невідомих типів даних
 
 
 # --- Обробка запитів від Web App (через aiohttp.web) ---
@@ -519,6 +560,26 @@ async def api_spin(request: Request):
     
     return json_response(result)
 
+async def api_coin_flip(request: Request):
+    data = await request.json()
+    user_id = data.get('user_id')
+    choice = data.get('choice') # 'heads' or 'tails'
+
+    if not user_id or not choice:
+        logger.warning("api_coin_flip: User ID or choice is missing in request.")
+        return json_response({'error': 'User ID and choice are required'}, status=400)
+    
+    if choice not in ['heads', 'tails']:
+        logger.warning(f"api_coin_flip: Invalid choice: {choice}")
+        return json_response({'error': 'Невірний вибір. Можливі варіанти: "heads" або "tails"'}, status=400)
+
+    result, _ = coin_flip_game(user_id, choice)
+    if 'error' in result:
+        return json_response(result, status=400)
+    
+    return json_response(result)
+
+
 async def api_claim_daily_bonus(request: Request):
     """API-ендпоінт для отримання щоденного бонусу через Web App."""
     data = await request.json()
@@ -536,7 +597,7 @@ async def api_claim_daily_bonus(request: Request):
     if last_claim_time and (current_time - last_claim_time) < cooldown_duration:
         time_left = cooldown_duration - (current_time - last_claim_time)
         minutes = int(time_left.total_seconds() // 60)
-        seconds = int((time_left.total_seconds() % 3600) % 60) # Уточнено розрахунок секунд
+        seconds = int(time_left.total_seconds() % 60)
         if time_left.total_seconds() >= 3600:
             hours = int(time_left.total_seconds() // 3600)
             return json_response(
@@ -638,13 +699,14 @@ app_aiohttp = Application()
 # Реєстрація API ендпоінтів для Web App (ПЕРЕД CORS)
 app_aiohttp.router.add_post('/api/get_balance', api_get_balance, name='api_get_balance')
 app_aiohttp.router.add_post('/api/spin', api_spin, name='api_spin')
+app_aiohttp.router.add_post('/api/coin_flip', api_coin_flip, name='api_coin_flip') # Новий ендпоінт
 app_aiohttp.router.add_post('/api/claim_daily_bonus', api_claim_daily_bonus, name='api_claim_daily_bonus')
 app_aiohttp.router.add_post('/api/claim_quick_bonus', api_claim_quick_bonus, name='api_claim_quick_bonus')
 app_aiohttp.router.add_post('/api/get_leaderboard', api_get_leaderboard, name='api_get_leaderboard')
 
 # Налаштовуємо CORS для дозволу запитів з Web App URL
 cors = aiohttp_cors.setup(app_aiohttp, defaults={
-    "https://my-slot-webapp.onrender.com": aiohttp_cors.ResourceOptions(
+    WEB_APP_URL: aiohttp_cors.ResourceOptions(
         allow_credentials=True,
         expose_headers="*",
         allow_headers="*",
@@ -654,7 +716,7 @@ cors = aiohttp_cors.setup(app_aiohttp, defaults={
 
 # Застосовуємо CORS до ваших API-маршрутів
 for route in list(app_aiohttp.router.routes()):
-    if route.resource and route.resource.name in ['api_get_balance', 'api_spin', 'api_claim_daily_bonus', 'api_claim_quick_bonus', 'api_get_leaderboard']:
+    if route.resource and route.resource.name in ['api_get_balance', 'api_spin', 'api_coin_flip', 'api_claim_daily_bonus', 'api_claim_quick_bonus', 'api_get_leaderboard']:
         cors.add(route)
 
 # Реєстрація хендлера для Telegram webhook
