@@ -192,8 +192,8 @@
                 // If a WebSocket connection already exists and is open, reuse it.
                 if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                     sendTelegramLog('connectBlackjackWebSocket: Existing WS connection found and open, reusing.', 'JS_DEBUG');
-                    // Request state to update the UI with current room info
-                    sendWsMessage("request_state");
+                    // Request state to update the UI with current room info - only if we are on Blackjack page
+                    // This is now handled by the BlackjackGame component's useEffect
                     return;
                 }
                 
@@ -212,7 +212,7 @@
                     newWs.onopen = () => {
                         sendTelegramLog("Blackjack WS: Connected.");
                         setBlackjackGameMessage("Підключено. Шукаємо кімнату...");
-                        sendWsMessage("request_state"); // Immediately request state
+                        sendWsMessage("request_state"); // Immediately request state on initial connection
                     };
 
                     newWs.onmessage = (event) => {
@@ -233,7 +233,10 @@
                                     const newTimer = message.status === "starting_timer" ? (message.timer || 0) : 0;
                                     return { ...message, timer: newTimer };
                                 });
-                                setBlackjackGameMessage(getGameStatusMessage(message, user.userId));
+                                // Only update game message if it's not a round result message
+                                if (message.type !== "round_result") {
+                                    setBlackjackGameMessage(getGameStatusMessage(message, user.userId));
+                                }
                                 fetchUserData(); // Update balance etc. from user context
                             } else if (message.type === "round_result") {
                                 const { message: resultMsg, winnings, balance, xp, level, next_level_xp, final_player_score, final_dealer_score } = message;
@@ -281,7 +284,7 @@
                     sendTelegramLog(`WS Sent: ${action} with payload ${JSON.stringify(payload).substring(0, 50)}`);
                 } else {
                     sendTelegramLog(`WS Error: Tried to send ${action} but WebSocket not open. Current readyState: ${wsRef.current ? wsRef.current.readyState : 'null'}`, 'JS_ERROR');
-                    // Attempt to reconnect if not open
+                    // Attempt to reconnect if not open and user is valid
                     if (user.userId && wsRef.current && wsRef.current.readyState !== WebSocket.CONNECTING) {
                         sendTelegramLog('Attempting to re-establish WS connection after failed send.', 'JS_WARN');
                         connectBlackjackWebSocket(); // Try to reconnect
@@ -837,18 +840,19 @@
         const BLACKJACK_BET_AMOUNT = 200; // Fixed bet amount for Blackjack
 
         const BlackjackGame = () => {
-            const { user, sendTelegramLog, blackjackRoomState, blackjackGameMessage, sendWsMessage, setBlackjackGameMessage } = useUser();
+            // Now get blackjack state and send function from context
+            const { user, sendTelegramLog, blackjackRoomState, blackjackGameMessage, sendWsMessage } = useUser();
             const [betInput, setBetInput] = useState(BLACKJACK_BET_AMOUNT);
             const [showBetModal, setShowBetModal] = useState(false);
 
-            // Effect to request state when component mounts or user ID changes
-            // This ensures the Blackjack UI updates with the current room state
+            // This useEffect will now only send request_state once when the component mounts
+            // or if the user.userId changes. It will NOT spam based on blackjackRoomState.status.
             useEffect(() => {
-                if (user.userId && blackjackRoomState.status !== "disconnected" && blackjackRoomState.status !== "error") {
-                    sendTelegramLog('BlackjackGame component mounted/user changed. Requesting WS state.');
+                if (user.userId) {
+                    sendTelegramLog('BlackjackGame component mounted/user changed. Requesting WS state (once).');
                     sendWsMessage("request_state");
                 }
-            }, [user.userId, sendWsMessage, blackjackRoomState.status, sendTelegramLog]);
+            }, [user.userId, sendWsMessage, sendTelegramLog]); // Removed blackjackRoomState.status from dependencies
 
 
             const getCardDisplay = (card) => {
