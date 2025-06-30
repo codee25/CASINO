@@ -84,7 +84,7 @@ else:
 dp = Dispatcher()
 
 # --- Конфігурація гри ---
-SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '�', '💎', '🍀']
+SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀']
 WILD_SYMBOL = '⭐'
 SCATTER_SYMBOL = '💰'
 ALL_REEL_SYMBOLS = SYMBOLS + [WILD_SYMBOL, SCATTER_SYMBOL]
@@ -137,7 +137,7 @@ PAYOUTS = {
     ('🍒', '🍒'): 100, ('🍋', '🍋'): 80, ('🍊', '🍊'): 60,
     ('🍇', '🍇'): 40, ('🔔', '🔔'): 30, ('💎', '💎'): 20,
     ('🍀', '🍀'): 10,
-    ('💰', '💰'): 200, ('💰', '💰', '💰'): 500,
+    ('💰', '💰'): 200, ('�', '💰', '💰'): 500,
 }
 
 # --- Функції для роботи з базою даних ---
@@ -1040,6 +1040,10 @@ class BlackjackRoom:
         
         await self.send_room_state_to_all() # Оновити стан, щоб показати, що гравець зробив ставку
 
+        # ДОДАНО ЛОГУВАННЯ: Перевірка статусу ставок всіх гравців після успішної ставки
+        current_player_bets_status = {p.user_id: p.has_bet for p in self.players.values()}
+        logger.info(f"handle_bet: After player {user_id} bet, players' has_bet status: {current_player_bets_status}")
+
         self._check_and_start_round_if_ready()
 
 
@@ -1049,15 +1053,19 @@ class BlackjackRoom:
         # Тобто, ми перевіряємо, чи всі гравці мають has_bet = True
         all_players_finished_betting = all(p.has_bet for p in self.players.values())
         
+        # ДОДАНО ЛОГУВАННЯ: Детальний стан гравців та умови запуску
+        player_bet_statuses = {p.user_id: {'has_bet': p.has_bet, 'is_playing': p.is_playing} for p in self.players.values()}
+        logger.info(f"_check_and_start_round_if_ready: Room {self.room_id}. Player statuses: {player_bet_statuses}. All finished betting: {all_players_finished_betting}. Current players in room: {len(self.players)}. Min players: {self.min_players}. Round in progress: {self.round_in_progress}")
+
         if all_players_finished_betting and len(self.players) >= self.min_players:
             if not self.round_in_progress: # Запобігаємо повторному запуску
                 self.round_in_progress = True
-                logger.info(f"Room {self.room_id}: All players finished betting. Starting round.")
+                logger.info(f"Room {self.room_id}: All players finished betting. Starting round. Initiating start_round task.")
                 asyncio.create_task(self.start_round()) # Запускаємо як асинхронну задачу
+            else:
+                logger.info(f"Room {self.room_id}: All players finished betting, but round already in progress. Skipping start_round.")
         else:
-            logger.info(f"Room {self.room_id}: Waiting for more players to finish betting. Current: {len(self.players)} players, min: {self.min_players}. All finished betting: {all_players_finished_betting}")
-            # Можна надіслати повідомлення гравцям, які чекають
-            # (це вже робиться в handle_bet для гравця, який не може поставити)
+            logger.info(f"Room {self.room_id}: Not all players finished betting or not enough players. Conditions for starting round not met.")
 
 
     async def handle_action(self, user_id: int, action: str):
