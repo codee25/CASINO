@@ -4,22 +4,23 @@ import json
 import random
 import urllib.parse
 import asyncio
+import uuid # Для генерації унікальних ID кімнат
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional # Для типізації
 
 import psycopg2
-from psycopg2 import sql
+from psycopg2 import sql # Для безпечного формування SQL-запитів
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel # Для моделей запитів FastAPI
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message
-from aiogram.filters import CommandStart, Command
-from aiogram.client.default import DefaultBotProperties
+from aiogram.filters import CommandStart, Command # Для фільтрів aiogram v3
+from aiogram.client.default import DefaultBotProperties # Для налаштувань бота
 
 # НОВИЙ ІМПОРТ: Для CORS
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,22 +30,29 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # --- Змінні середовища ---
-API_TOKEN = os.getenv('BOT_TOKEN')
-WEB_APP_FRONTEND_URL = os.getenv('WEB_APP_FRONTEND_URL')
-WEBHOOK_HOST = os.getenv('RENDER_EXTERNAL_HOSTNAME')
+# Важливо: Встановіть ці змінні оточення на Render.com для вашого Web Service
+API_TOKEN = os.getenv('BOT_TOKEN') # Токен Telegram бота
+WEB_APP_FRONTEND_URL = os.getenv('WEB_APP_FRONTEND_URL') # URL вашого Render Static Site
+# RENDER_EXTERNAL_HOSTNAME встановлюється Render.com автоматично. Це URL вашого FastAPI бекенду.
+WEBHOOK_HOST = os.getenv('RENDER_EXTERNAL_HOSTNAME') 
 
+# Шлях до папки з фронтендом (webapp)
 WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
 
 # --- FastAPI App Setup ---
 app = FastAPI()
 
 # ДОДАНО: Налаштування CORS
+# Дозволяємо доступ з будь-якого домену для Web App,
+# а також для локальної розробки (якщо використовується)
 origins = [
-    WEB_APP_FRONTEND_URL, # Дозволяємо ваш фронтенд URL
-    f"https://{WEBHOOK_HOST}", # Дозволяємо ваш бекенд URL
-    "http://localhost", # Для локальної розробки
-    "http://localhost:3000",
-    "http://localhost:5173", # Типовий порт для Vite/React dev server
+    "*", # Тимчасово дозволимо все, щоб переконатися, що CORS не є проблемою.
+         # У продакшені краще вказувати конкретні URL фронтенду.
+    # WEB_APP_FRONTEND_URL, # Потім можна повернутися до цього
+    # f"https://{WEBHOOK_HOST}", 
+    # "http://localhost",
+    # "http://localhost:3000",
+    # "http://localhost:5173",
 ]
 
 app.add_middleware(
@@ -59,7 +67,7 @@ app.mount("/static", StaticFiles(directory=WEBAPP_DIR), name="static")
 
 # --- Telegram Bot Webhook Configuration ---
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL: Optional[str] = None
+WEBHOOK_URL: Optional[str] = None # Буде встановлено під час запуску
 
 ADMIN_ID_STR = os.getenv('ADMIN_ID')
 ADMIN_ID: Optional[int] = None
@@ -73,7 +81,9 @@ except ValueError:
 DATABASE_URL = os.getenv('DATABASE_URL')
 if not DATABASE_URL:
     logger.critical("DATABASE_URL environment variable is not set. The bot will not be able to connect to the database.")
+    # У продакшені тут варто кинути виняток, щоб програма не запускалася без БД
 
+# --- Aiogram Bot Setup ---
 if not API_TOKEN:
     logger.critical("API_TOKEN (BOT_TOKEN) environment variable not set. Telegram bot will not work.")
     bot = Bot(token="DUMMY_TOKEN", default=DefaultBotProperties(parse_mode=ParseMode.HTML))
@@ -82,26 +92,27 @@ else:
 
 dp = Dispatcher()
 
-# --- Конфігурація гри ---
-SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀']
+# --- Конфігурація гри (збігається з JS фронтендом) ---
+SYMBOLS = ['🍒', '🍋', '🍊', '�', '🔔', '💎', '🍀']
 WILD_SYMBOL = '⭐'
 SCATTER_SYMBOL = '💰'
 ALL_REEL_SYMBOLS = SYMBOLS + [WILD_SYMBOL, SCATTER_SYMBOL]
 
-BET_AMOUNT = 100
-COIN_FLIP_BET_AMOUNT = 50
+BET_AMOUNT = 100 # Ставка для слотів
+COIN_FLIP_BET_AMOUNT = 50 # Ставка для підкидання монетки
 
-FREE_COINS_AMOUNT = 500
-COOLDOWN_HOURS = 24
+FREE_COINS_AMOUNT = 500 # Кількість фантиків для /get_coins
+COOLDOWN_HOURS = 24 # Затримка в годинах для /get_coins
 
-DAILY_BONUS_AMOUNT = 300
+DAILY_BONUS_AMOUNT = 300 # Щоденний бонус через Web App
 DAILY_BONUS_COOLDOWN_HOURS = 24
 
-QUICK_BONUS_AMOUNT = 100
+QUICK_BONUS_AMOUNT = 100 # Швидкий бонус через Web App
 QUICK_BONUS_COOLDOWN_MINUTES = 15
 
+# XP та Рівні
 XP_PER_SPIN = 10
-XP_PER_COIN_FLIP = 5
+XP_PER_COIN_FLIP = 5 # XP за підкидання монетки
 XP_PER_WIN_MULTIPLIER = 2 
 LEVEL_THRESHOLDS = [
     0,     # Level 1: 0 XP
@@ -119,15 +130,20 @@ LEVEL_THRESHOLDS = [
 ]
 
 def get_level_from_xp(xp: int) -> int:
+    """Визначає рівень користувача на основі досвіду (1-базований)."""
     for i, threshold in enumerate(LEVEL_THRESHOLDS):
         if xp < threshold:
-            return i 
-    return len(LEVEL_THRESHOLDS) 
+            return i + 1 # Рівні починаються з 1, індекси з 0
+    return len(LEVEL_THRESHOLDS) # Максимальний рівень
 
 def get_xp_for_next_level(level: int) -> int:
-    if level >= len(LEVEL_THRESHOLDS): 
-        return LEVEL_THRESHOLDS[-1] 
-    return LEVEL_THRESHOLDS[level] 
+    """Повертає XP, необхідний для наступного рівня (або для поточного, якщо це останній)."""
+    # Level 1-based, index 0-based.
+    # If current level is 1, we want threshold for Level 2 (index 1)
+    if level >= len(LEVEL_THRESHOLDS): # Якщо поточний рівень - останній можливий
+        return LEVEL_THRESHOLDS[-1] # Повертаємо поріг останнього рівня
+    return LEVEL_THRESHOLDS[level] # Порог для досягнення наступного рівня
+
 
 PAYOUTS = {
     ('🍒', '🍒', '🍒'): 1000, ('🍋', '🍋', '🍋'): 800, ('🍊', '🍊', '🍊'): 600,
@@ -140,7 +156,9 @@ PAYOUTS = {
 }
 
 # --- Функції для роботи з базою даних ---
+
 def get_db_connection():
+    """Створює та повертає з'єднання до бази даних PostgreSQL за URL."""
     conn = None
     if not DATABASE_URL:
         logger.error("Attempted to connect to DB, but DATABASE_URL is not set.")
@@ -162,6 +180,7 @@ def get_db_connection():
         raise
 
 def init_db():
+    """Ініціалізує таблиці та виконує міграції для бази даних PostgreSQL."""
     conn = None
     try:
         conn = get_db_connection()
@@ -202,6 +221,7 @@ def init_db():
             conn.close()
 
 def get_user_data(user_id: int | str) -> dict:
+    """Отримує всі дані користувача з БД. Створює, якщо не існує."""
     user_id_int = int(user_id) 
     conn = None
     try:
@@ -214,6 +234,7 @@ def get_user_data(user_id: int | str) -> dict:
         result = cursor.fetchone()
         if result:
             logger.info(f"Retrieved user {user_id_int} data: balance={result[1]}, xp={result[2]}, level={result[3]}")
+            # Забезпечення часової зони UTC
             last_free_coins_claim_db = result[4]
             if last_free_coins_claim_db and last_free_coins_claim_db.tzinfo is None:
                 last_free_coins_claim_db = last_free_coins_claim_db.replace(tzinfo=timezone.utc)
@@ -255,6 +276,7 @@ def get_user_data(user_id: int | str) -> dict:
             conn.close()
 
 def update_user_data(user_id: int | str, **kwargs):
+    """Оновлює дані користувача в базі даних PostgreSQL. Приймає ключові аргументи для оновлення."""
     user_id_int = int(user_id)
     conn = None
     try:
@@ -267,6 +289,7 @@ def update_user_data(user_id: int | str, **kwargs):
         update_fields_parts = []
         update_values = []
 
+        # Заповнюємо fields_to_update поточними значеннями з БД, потім перевизначаємо kwargs
         fields_to_update = {
             'username': kwargs.get('username', current_data_from_db.get('username', 'Unnamed Player')),
             'balance': kwargs.get('balance', current_data_from_db.get('balance', 0)),
@@ -277,6 +300,7 @@ def update_user_data(user_id: int | str, **kwargs):
             'last_quick_bonus_claim': kwargs.get('last_quick_bonus_claim', current_data_from_db.get('last_quick_bonus_claim'))
         }
         
+        # Забезпечення часової зони UTC перед збереженням
         for key in ['last_free_coins_claim', 'last_daily_bonus_claim', 'last_quick_bonus_claim']:
             if fields_to_update[key] and fields_to_update[key].tzinfo is None:
                 fields_to_update[key] = fields_to_update[key].replace(tzinfo=timezone.utc)
@@ -305,6 +329,7 @@ def update_user_data(user_id: int | str, **kwargs):
             conn.close()
 
 def check_win_conditions(symbols: List[str]) -> int:
+    """Перевіряє виграшні комбінації для 3-барабанного слота, враховуючи Wild та Scatter."""
     winnings = 0
     s1, s2, s3 = symbols
     logger.info(f"Checking win conditions for symbols: {symbols}")
@@ -378,7 +403,7 @@ def spin_slot_logic(user_id: int | str) -> Dict:
 
     update_user_data(user_id, balance=new_balance, xp=new_xp, level=new_level)
 
-    final_user_data = get_user_data(user_id) 
+    final_user_data = get_user_data(user_id) # Отримуємо оновлені дані для відповіді
     
     return {
         'symbols': result_symbols, 'winnings': winnings, 'balance': final_user_data['balance'],
@@ -858,29 +883,72 @@ class BlackjackRoom:
     async def end_round(self):
         print(f"Room {self.room_id}: Ending round.")
         self.status = "round_end"; dealer_score = self.dealer_hand.value
+
+        # Обробка результатів для кожного гравця та оновлення бази даних
         for player in self.players.values():
-            user_data = get_user_data(player.user_id)
-            if not user_data: continue
-            player_score = player.hand.value; winnings = 0; message = ""; xp_gain = 0
-            if player_score > 21: message = "Ви перебрали! Програш."; xp_gain = 1 
-            elif dealer_score > 21: winnings = player.bet * 2; message = "Дилер перебрав! Ви виграли!"; xp_gain = 10
-            elif player_score > dealer_score: winnings = player.bet * 2; message = "Ви виграли!"; xp_gain = 10
-            elif player_score < dealer_score: message = "Ви програли."; xp_gain = 1 
-            else: winnings = player.bet; message = "Нічия!"; xp_gain = 2 
-            new_balance = user_data["balance"] + winnings; new_xp = user_data["xp"] + xp_gain
-            new_level = get_level_from_xp(new_xp); update_user_data(player.user_id, balance=new_balance, xp=new_xp, level=new_level)
+            user_data = get_user_data(player.user_id) # Отримуємо актуальні дані з БД
+            if not user_data: continue # Пропускаємо, якщо користувача не знайдено (хоча цього не повинно бути)
+
+            player_score = player.hand.value
+            winnings = 0
+            message = ""
+            xp_gain = 0
+
+            # Визначення результатів гри
+            if player_score > 21: # Гравець перебрав
+                message = "Ви перебрали! Програш."
+                xp_gain = 1 # Невеликий XP за участь
+            elif dealer_score > 21: # Дилер перебрав
+                winnings = player.bet * 2
+                message = "Дилер перебрав! Ви виграли!"
+                xp_gain = 10
+            elif player_score > dealer_score: # Гравець виграв
+                winnings = player.bet * 2
+                message = "Ви виграли!"
+                xp_gain = 10
+            elif player_score < dealer_score: # Гравець програв
+                message = "Ви програли."
+                xp_gain = 1 # Невеликий XP за участь
+            else: # Нічия
+                winnings = player.bet # Повертаємо ставку
+                message = "Нічия!"
+                xp_gain = 2 # Трохи XP за нічию
+
+            new_balance = user_data["balance"] + winnings
+            new_xp = user_data["xp"] + xp_gain
+            new_level = get_level_from_xp(new_xp)
+
+            update_user_data(player.user_id, balance=new_balance, xp=new_xp, level=new_level) # Оновлюємо БД
+            
+            # Отримуємо оновлені дані з БД для відповіді, щоб бути впевненими в актуальності
             updated_user_data_for_response = get_user_data(player.user_id)
-            if new_level > user_data["level"]: await player.websocket.send_json({"type": "level_up", "level": new_level})
+
+            # Перевіряємо, чи відбувся рівень вгору, і надсилаємо відповідне повідомлення
+            if new_level > user_data["level"]:
+                await player.websocket.send_json({"type": "level_up", "level": new_level})
+
+            # Надсилаємо гравцю результат раунду
             await player.websocket.send_json({
-                "type": "round_result", "message": message, "winnings": winnings,
-                "balance": updated_user_data_for_response["balance"], "xp": updated_user_data_for_response["xp"],
+                "type": "round_result",
+                "message": message,
+                "winnings": winnings,
+                "balance": updated_user_data_for_response["balance"],
+                "xp": updated_user_data_for_response["xp"],
                 "level": updated_user_data_for_response["level"],
                 "next_level_xp": get_xp_for_next_level(updated_user_data_for_response["level"]),
-                "final_player_score": player_score, "final_dealer_score": dealer_score 
+                "final_player_score": player_score,
+                "final_dealer_score": dealer_score # Надсилаємо фінальний рахунок дилера для відображення
             })
-            player.reset_for_round() 
-        self.status = "waiting"; self.dealer_hand = Hand(); await self.send_room_state_to_all()
-        await asyncio.sleep(2); self.status = "betting"; await self.send_room_state_to_all() 
+
+            player.reset_for_round() # Скидаємо стан гравця для наступного раунду
+
+        # Після обробки всіх гравців, повертаємо кімнату в стан очікування
+        self.status = "waiting" 
+        self.dealer_hand = Hand() # Очищаємо руку дилера
+        await self.send_room_state_to_all() # Надсилаємо скинутий стан
+        await asyncio.sleep(2) # Пауза перед переходом до фази ставок
+        self.status = "betting" # Одразу дозволяємо ставки для наступного раунду
+        await self.send_room_state_to_all() # Повідомляємо клієнтам про відкриття UI для ставок
 
 class BlackjackRoomManager:
     def __init__(self): self.rooms: Dict[str, BlackjackRoom] = {}
@@ -920,10 +988,12 @@ blackjack_room_manager = BlackjackRoomManager()
 
 # --- WebSocket Endpoint ---
 @app.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: str):
-    user_id_int = int(user_id)
+async def websocket_endpoint(websocket: WebSocket, user_id: str): # user_id as str initially from path
+    user_id_int = int(user_id) # Конвертуємо в int для внутрішнього використання
+
     user_data_db = get_user_data(user_id_int)
     username = user_data_db.get("username", f"Гравець {str(user_id_int)[-4:]}")
+    
     room_id = await blackjack_room_manager.create_or_join_room(user_id_int, username, websocket)
     if not room_id: await websocket.close(code=1008, reason="Could not join/create room."); return
     try:
@@ -979,7 +1049,7 @@ async def on_startup():
     external_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
     if not external_hostname:
         logger.warning("RENDER_EXTERNAL_HOSTNAME environment variable not set. Assuming localhost for webhook setup.")
-        external_hostname = "localhost:8000"
+        external_hostname = "localhost:8000" # Fallback for local testing
     global WEBHOOK_URL
     WEBHOOK_URL = f"https://{external_hostname}{WEBHOOK_PATH}" 
     global WEB_APP_FRONTEND_URL
