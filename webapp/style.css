@@ -346,6 +346,17 @@ button.pulsing {
     animation: pulse 1.5s infinite;
 }
 
+/* Pulsing effect for timer */
+@keyframes pulse-fast {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.1); opacity: 0.7; }
+    100% { transform: scale(1); opacity: 1; }
+}
+.animate-pulse-fast {
+    animation: pulse-fast 0.8s infinite;
+}
+
+
 /* Shine effect for text (used in win-message) */
 @keyframes shine {
     0% { background-position: -200% 0; }
@@ -461,4 +472,96 @@ button.pulsing {
 /* Override existing button pulsing for nav buttons, if desired */
 .nav-button.pulsing {
     animation: none; /* No pulsing on nav buttons */
+}
+
+/* Blackjack specific styles */
+.blackjack-game {
+    /* flex-grow, flex-col, items-center, justify-between, p-4, md:p-8, w-full are from Tailwind */
+    background: radial-gradient(circle at center, #006400 0%, #004d00 75%, #003300 100%); /* Green felt effect */
+    border-radius: 1rem;
+    box-shadow: inset 0 0 20px rgba(0,0,0,0.7);
+    padding: 1.5rem;
+    max-width: 95%; /* Make sure it fits smaller screens */
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.dealer-area, .players-area {
+    background-color: rgba(0, 0, 0, 0.4); /* Semi-transparent overlay */
+    padding: 1rem;
+    border-radius: 0.75rem;
+    box-shadow: 0 0 10px rgba(0,0,0,0.5);
+    margin-bottom: 1rem;
+    border: 1px solid rgba(255,255,255,0.1);
+}
+
+.card-item {
+    width: 60px; /* Fixed width for cards */
+    height: 90px; /* Fixed height for cards */
+    background-color: white;
+    border-radius: 5px;
+    box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px;
+    position: relative;
+    font-weight: bold;
+    font-size: 1.2em;
+    color: black;
+    border: 1px solid #ccc;
+    flex-shrink: 0; /* Prevent cards from shrinking */
+}
+
+.card-item .card-rank {
+    font-size: 1.2em;
+    line-height: 1;
+}
+
+.card-item .card-suit {
+    font-size: 1.5em;
+    line-height: 1;
+}
+
+/* Styles for the hidden card */
+.card-item .card.text-gray-900 { /* This targets the card background for hidden card */
+    background-color: #8B4513; /* Brown/wood effect for card back */
+    color: transparent; /* Hide rank/suit text */
+    text-shadow: none;
+    display: flex; /* Ensure content is centered for the '?' */
+    justify-content: center;
+    align-items: center;
+    border: 2px solid #5A2C00;
+}
+.card-item .card.text-gray-900::before {
+    content: '?'; /* Placeholder for hidden card */
+    font-size: 3em;
+    color: white;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.player-card-container {
+    background-color: rgba(255, 255, 255, 0.05); /* Lighter background for each player */
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    margin-bottom: 0.5rem;
+    border: 1px solid rgba(255,255,255,0.1);
+}
+
+.current-turn-highlight {
+    border: 2px solid #FFD700; /* Gold highlight for current player */
+    box-shadow: 0 0 10px #FFD700;
+}
+
+.game-status-message-box {
+    border-radius: 12px;
+    padding: 0.75rem 1rem;
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
+}
+.game-status-message-box p {
+    margin: 0;
 }
