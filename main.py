@@ -13,6 +13,7 @@ from psycopg2 import sql # Для безпечного формування SQL-
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel # Для моделей запитів FastAPI
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
@@ -72,7 +73,7 @@ else:
 dp = Dispatcher()
 
 # --- Конфігурація гри (збігається з JS фронтендом) ---
-SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀']
+SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '�', '🍀']
 WILD_SYMBOL = '⭐'
 SCATTER_SYMBOL = '💰'
 ALL_REEL_SYMBOLS = SYMBOLS + [WILD_SYMBOL, SCATTER_SYMBOL]
@@ -110,18 +111,18 @@ LEVEL_THRESHOLDS = [
 
 def get_level_from_xp(xp: int) -> int:
     """Визначає рівень користувача на основі досвіду."""
+    # Adjusted to return 1-based level, matching frontend expectation (Level 1 is 0 XP)
     for i, threshold in enumerate(LEVEL_THRESHOLDS):
         if xp < threshold:
-            return i # Рівні починаються з 0 для індексу, тому рівень буде i
-    return len(LEVEL_THRESHOLDS) - 1 # Максимальний рівень, якщо XP перевищує всі пороги (наприклад, 12, індекс 11)
+            return i # Returns 1 for XP < 100 (index 0)
+    return len(LEVEL_THRESHOLDS) # Returns max level if XP is >= last threshold
 
 def get_xp_for_next_level(level: int) -> int:
     """Повертає XP, необхідний для наступного рівня (або для поточного, якщо це останній)."""
-    # Рівні у фронтенді починаються з 1, але індекси LEVEL_THRESHOLDS з 0
-    # Тому, якщо level = 1 (перший рівень), ми шукаємо поріг для index 1 (другий рівень)
-    if level >= len(LEVEL_THRESHOLDS):
-        return LEVEL_THRESHOLDS[-1] # Якщо вже на максимальному рівні
-    return LEVEL_THRESHOLDS[level] # Порог для досягнення наступного рівня (level+1)
+    # Level is 1-based. To get threshold for next level, use current level as index (e.g., Level 1 -> index 1 for Level 2 threshold)
+    if level >= len(LEVEL_THRESHOLDS): # If current level is already max or beyond
+        return LEVEL_THRESHOLDS[-1] # No next level, just return the highest threshold
+    return LEVEL_THRESHOLDS[level] # Return threshold for the next level (e.g., for Level 1, returns LEVEL_THRESHOLDS[1] which is 100 XP for Level 2)
 
 
 PAYOUTS = {
@@ -131,7 +132,7 @@ PAYOUTS = {
     ('🍊', '🍊', '🍊'): 600,
     ('🍇', '🍇', '🍇'): 400,
     ('🔔', '🔔', '🔔'): 300,
-    ('�', '💎', '💎'): 200,
+    ('💎', '💎', '💎'): 200,
     ('🍀', '🍀', '🍀'): 150,
     ('⭐', '⭐', '⭐'): 2000, # Високий виграш за три Wild
     
@@ -1358,8 +1359,14 @@ async def on_shutdown():
             logger.info("Telegram webhook deleted.")
         except Exception as e:
             logger.error(f"Failed to delete Telegram webhook on shutdown: {e}")
-    finally:
-        await dp.storage.close() # Close dispatcher storage if used
-        await bot.session.close() # Close aiohttp session
-        logger.info("Bot session closed.")
+    # The 'finally' block must be directly under 'try' or 'except' or at the same level as 'try'
+    # No 'try' block was present for this 'finally' in the previous version, causing SyntaxError.
+    # We put the cleanup directly here, or wrap it in a try-except.
+    # The provided logs for "finally:" were misleading in their context, but confirmed the issue.
+    # The cleanup below does not require an outer try-except-finally if not handling exceptions there.
+    # It's generally good practice to ensure resources are closed.
+    logger.info("Closing dispatcher storage and bot session.")
+    await dp.storage.close() 
+    await bot.session.close() 
+    logger.info("Bot session closed.")
 
