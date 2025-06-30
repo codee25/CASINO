@@ -14,9 +14,9 @@
 <body class="flex flex-col items-center justify-between w-screen h-screen bg-gradient-to-br from-purple-900 via-gray-900 to-indigo-900 text-white overflow-hidden">
     <div id="root" class="relative w-full h-full flex flex-col items-center justify-start">
         <!-- React App will be mounted here -->
-        <!-- Початковий текст для дебагу, якщо React не завантажується -->
+        <!-- Початкове повідомлення, поки React завантажується -->
         <p id="initialLoadingMessage" class="text-xl text-white mt-10">
-            Завантаження React-додатка... Якщо ви бачите це довго, можливо, є помилка.
+            Завантаження гри... Будь ласка, зачекайте.
         </p>
     </div>
     
@@ -25,77 +25,70 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 
-    <!-- Your React App component file - it will define App and UserProvider globally -->
-    <script type="text/babel" data-presets="react" src="./src/App.jsx"></script>
+    <!-- Your React App component file - it defines App and UserProvider globally -->
+    <!-- ЦЕЙ СКРИПТ ПОВИНЕН БУТИ ОБРОБЛЕНИЙ BABEL ТА ЗАВАНТАЖЕНИЙ ПЕРШИМ -->
+    <script type="text/babel" data-presets="react" src="./app.jsx"></script>
 
-    <!-- React App entry point: uses globally available App and UserProvider -->
+    <!-- Main React App entry point: uses globally available App and UserProvider -->
+    <!-- ЦЕЙ СКРИПТ ЧЕКАЄ НА ЗАВАНТАЖЕННЯ DOM ТА ГЛОБАЛЬНИХ КОМПОНЕНТІВ -->
     <script type="text/babel" data-presets="react">
         // Лог на самому початку цього скрипта
         if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
-            Telegram.WebApp.sendData('JS_VERY_FIRST_REACT_INDEX_LOG: ReactDOM script block started.');
+            Telegram.WebApp.sendData('JS_VERY_FIRST_REACT_INDEX_LOG: ReactDOM mount script block started.');
         } else {
-            console.error("JS_VERY_FIRST_REACT_INDEX_ERROR: Telegram.WebApp not available at ReactDOM script block start.");
+            console.error("JS_VERY_FIRST_REACT_INDEX_ERROR: Telegram.WebApp not available at ReactDOM mount script block start.");
         }
 
-        try {
-            // Перевіряємо, чи App та UserProvider доступні глобально
-            const App = window.App; // Access App globally
-            const UserProvider = window.UserProvider; // Access UserProvider globally
-
-            if (!App) {
-                if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
-                    Telegram.WebApp.sendData('JS_ERROR: App component not available globally.');
-                }
-                document.getElementById('root').innerHTML = '<p class="text-red-500 text-center mt-10">Помилка: Компонент App не завантажено або недоступний.</p>';
-                throw new Error("App component not available globally.");
-            }
-            if (!UserProvider) {
-                if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
-                    Telegram.WebApp.sendData('JS_ERROR: UserProvider component not available globally.');
-                }
-                document.getElementById('root').innerHTML = '<p class="text-red-500 text-center mt-10">Помилка: Компонент UserProvider не завантажено або недоступний.</p>';
-                throw new Error("UserProvider component not available globally.");
-            }
-
+        // Чекаємо, поки DOM буде повністю завантажений
+        document.addEventListener('DOMContentLoaded', () => {
             const rootElement = document.getElementById('root');
+            const initialMessage = document.getElementById('initialLoadingMessage');
+
             if (!rootElement) {
+                console.error("Error: Root element with ID 'root' not found for ReactDOM.createRoot.");
                 if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
-                    Telegram.WebApp.sendData('JS_ERROR: Root element not found.');
+                    Telegram.WebApp.sendData('JS_ERROR: Root element not found for ReactDOM.');
                 }
-                console.error("Error: Root element with ID 'root' not found.");
-                // Немає куди монтувати React, якщо немає root елемента
-            } else {
-                // Прибираємо початкове повідомлення після успішного початку завантаження React
-                const initialMessage = document.getElementById('initialLoadingMessage');
                 if (initialMessage) {
-                    initialMessage.remove();
+                    initialMessage.textContent = 'Критична помилка: Кореневий елемент не знайдено.';
+                    initialMessage.classList.add('text-red-500');
                 }
+                return;
+            }
 
-                const root = ReactDOM.createRoot(rootElement);
-                root.render(
-                    <React.StrictMode>
-                        <UserProvider>
-                            <App />
-                        </UserProvider>
-                    </React.StrictMode>
-                );
+            // Перевіряємо, чи App та UserProvider доступні глобально
+            const App = window.App; // Доступ до App глобально
+            const UserProvider = window.UserProvider; // Доступ до UserProvider глобально
+
+            if (!App || !UserProvider) {
+                console.error("Error: App or UserProvider component not available globally after app.jsx load.");
                 if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
-                    Telegram.WebApp.sendData('JS_LOG: React app rendered successfully.');
+                    Telegram.WebApp.sendData('JS_ERROR: App/UserProvider not global after app.jsx.');
                 }
+                if (initialMessage) {
+                    initialMessage.innerHTML = '<p class="text-red-500 text-center mt-10 text-lg">Критична помилка: Компоненти гри не завантажено. <br/> Перевірте консоль браузера або логи Render.</p>';
+                }
+                return;
             }
-        } catch (e) {
-            console.error("Error during React app initialization:", e);
+            
+            // Якщо все добре, приховуємо початкове повідомлення та монтуємо React-додаток
+            if (initialMessage) {
+                initialMessage.remove();
+            }
+
+            const root = ReactDOM.createRoot(rootElement);
+            root.render(
+                <React.StrictMode>
+                    <UserProvider>
+                        <App />
+                    </UserProvider>
+                </React.StrictMode>
+            );
+
             if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
-                Telegram.WebApp.sendData(`JS_FATAL_REACT_ERROR: ${e.message.substring(0, Math.min(e.message.length, 100))}`);
+                Telegram.WebApp.sendData('JS_LOG: React app rendered successfully into DOM.');
             }
-            const rootElement = document.getElementById('root');
-            if (rootElement) {
-                rootElement.innerHTML = `<p class="text-red-500 text-center mt-10 text-lg">
-                    Критична помилка завантаження гри: <br/> ${e.message}
-                    <br/> Перевірте консоль браузера або логи Render.
-                </p>`;
-            }
-        }
+        }); // End DOMContentLoaded
     </script>
 </body>
 </html>

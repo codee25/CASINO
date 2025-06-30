@@ -1,16 +1,22 @@
 // Use window.React for unpkg.com global React
 const React = window.React;
-const { useState, useEffect, createContext, useContext, useCallback, useRef } = window.React; // Import useRef here
+const { useState, useEffect, createContext, useContext, useCallback, useRef } = window.React;
 
-import * as Tone from 'tone'; // Import Tone.js
+// Ensure Tone is globally available from the CDN script in index.html
+const Tone = window.Tone || {
+    context: { state: 'suspended', resume: async () => {}, start: async () => {} },
+    MembraneSynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; },
+    PolySynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; },
+    NoiseSynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; }
+};
+
 
 // -----------------------------------------------------------------------------
 // Global User Context
 // -----------------------------------------------------------------------------
 const UserContext = createContext(null);
 
-// Make UserProvider globally accessible
-window.UserProvider = ({ children }) => {
+const UserProvider = ({ children }) => {
     const [user, setUser] = useState({
         userId: null,
         username: 'Unnamed Player',
@@ -110,7 +116,7 @@ window.UserProvider = ({ children }) => {
     );
 };
 
-export const useUser = () => useContext(UserContext);
+const useUser = () => useContext(UserContext);
 
 
 // -----------------------------------------------------------------------------
@@ -303,7 +309,6 @@ const SlotMachine = () => {
 
         setIsSpinning(true);
         setMessage('');
-        // setReelSymbols(['?', '?', '?']); // No longer needed here as animateReels clears it
         sendTelegramLog('Spin button clicked, starting spin process.');
 
         try {
@@ -777,7 +782,6 @@ const TopHeader = ({ onShowLeaderboard }) => {
             </button>
 
             {/* Balance and Level Display */}
-            {/* Changed from id to className for React state updates. */}
             <div className="balance-area absolute top-16 left-1/2 transform -translate-x-1/2 bg-gray-800 rounded-b-xl py-2 px-4 shadow-inner border border-gray-700 border-t-0 w-full max-w-xs md:max-w-sm z-20">
                 <div className="flex justify-between items-center w-full mb-1">
                     <span className="text-base md:text-lg text-gray-300 font-medium">Баланс:</span>
@@ -810,10 +814,7 @@ const TopHeader = ({ onShowLeaderboard }) => {
 // -----------------------------------------------------------------------------
 // Main App Component
 // -----------------------------------------------------------------------------
-// No longer need to import useRef here as it's extracted from window.React at the top
-
-// Make App globally accessible
-window.App = function App() {
+function App() {
     const { isLoading, error, fetchUserData } = useUser();
     const [currentPage, setCurrentPage] = useState('slots'); // 'slots', 'coin_flip', 'leaderboard'
 
@@ -909,4 +910,8 @@ window.App = function App() {
         </div>
     );
 }
+
+// Make App and UserProvider globally accessible to index.html
+window.App = App;
+window.UserProvider = UserProvider;
 
