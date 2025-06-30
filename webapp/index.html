@@ -28,9 +28,9 @@
     <script type="text/babel" data-presets="react">
         // Log at the very beginning of this script
         if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
-            Telegram.WebApp.sendData('JS_VERY_FIRST_REACT_INDEX_LOG: Babel script block started.');
+            Telegram.WebApp.sendData('JS_LOG: Babel script block started.');
         } else {
-            console.error("JS_VERY_FIRST_REACT_INDEX_ERROR: Telegram.WebApp not available at Babel script block start (direct browser access).");
+            console.error("JS_ERROR: Telegram.WebApp not available at Babel script block start.");
         }
 
         // Use window.React for unpkg.com global React
@@ -39,10 +39,8 @@
         const ReactDOM = window.ReactDOM; // Ensure ReactDOM is also accessed globally
 
         // Ensure Tone is globally available from the CDN script in index.html
-        // And also provide dummy functions if Tone.js somehow fails to load (e.g. offline)
         const Tone = window.Tone || {
             context: { state: 'suspended', resume: async () => { console.warn("Tone.context.resume not available. Tone.js might not be loaded."); }, start: async () => { console.warn("Tone.context.start not available. Tone.js might not be loaded."); } },
-            // Provide dummy constructors for synths if Tone is not loaded
             MembraneSynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; },
             PolySynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; },
             NoiseSynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; }
@@ -87,52 +85,73 @@
                 let currentUsername = 'Unnamed Player';
 
                 // Check for Telegram.WebApp availability and get user data
-                if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe?.user?.id) {
-                    currentUserId = window.Telegram.WebApp.initDataUnsafe.user.id;
-                    currentUsername = window.Telegram.WebApp.initDataUnsafe.user.username || window.Telegram.WebApp.initDataUnsafe.user.first_name || `Гравець ${String(currentUserId).slice(-4)}`;
-                    sendTelegramLog(`WebApp Init: User ID ${currentUserId}, Username ${currentUsername}`);
-                    window.Telegram.WebApp.expand(); // Expand WebApp to full height
+                if (window.Telegram && window.Telegram.WebApp) {
+                    // Try to expand the web app as early as possible
+                    window.Telegram.WebApp.expand(); 
+                    if (window.Telegram.WebApp.initDataUnsafe?.user?.id) {
+                        currentUserId = window.Telegram.WebApp.initDataUnsafe.user.id;
+                        currentUsername = window.Telegram.WebApp.initDataUnsafe.user.username || window.Telegram.WebApp.initDataUnsafe.user.first_name || `Гравець ${String(currentUserId).slice(-4)}`;
+                        sendTelegramLog(`WebApp Init: User ID ${currentUserId}, Username ${currentUsername}`);
+                    } else {
+                        sendTelegramLog('WebApp initialized, but user ID is missing from initDataUnsafe. Setting dummy user.', 'JS_WARN');
+                        currentUserId = 'dummy_user_12345'; // Fallback to dummy ID if user data not available
+                        currentUsername = 'DemoPlayer';
+                        setError('Для повної функціональності запустіть гру через Telegram.');
+                    }
                 } else {
-                    sendTelegramLog('WebApp NOT Initialized - user ID missing (likely direct access or local testing). Setting dummy user.', 'JS_WARN');
-                    // For local development or direct browser access, provide dummy data
-                    currentUserId = 123456789; // Dummy ID
-                    currentUsername = 'TestPlayer';
-                    setError('Для повної функціональності запустіть гру через Telegram.');
+                    sendTelegramLog('Telegram.WebApp NOT Initialized (likely direct browser access or local testing). Setting dummy user.', 'JS_WARN');
+                    currentUserId = 'dummy_user_local_123'; // Fallback to dummy ID for local testing
+                    currentUsername = 'LocalPlayer';
+                    setError('Для повної функціональності запустіть гру через Telegram. (Локально)');
                 }
 
                 try {
-                    const response = await fetch(`${API_BASE_URL}/api/get_balance`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ user_id: currentUserId, username: currentUsername })
-                    });
+                    // Only attempt fetch if a user ID is available (even dummy)
+                    if (currentUserId) {
+                        const response = await fetch(`${API_BASE_URL}/api/get_balance`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ user_id: currentUserId, username: currentUsername })
+                        });
 
-                    if (!response.ok) {
-                        const errData = await response.json();
-                        sendTelegramLog(`Balance fetch API failed: ${errData.error || 'Unknown error'}`, 'JS_ERROR');
-                        throw new Error(errData.error || 'Failed to fetch user data');
-                    }
+                        if (!response.ok) {
+                            const errData = await response.json();
+                            sendTelegramLog(`Balance fetch API failed: ${errData.error || 'Unknown error'}`, 'JS_ERROR');
+                            throw new Error(errData.error || 'Failed to fetch user data');
+                        }
 
-                    const data = await response.json();
-                    setUser(prevUser => {
-                        const newUserState = {
+                        const data = await response.json();
+                        setUser(prevUser => {
+                            const newUserState = {
+                                userId: currentUserId,
+                                username: currentUsername,
+                                balance: data.balance,
+                                xp: data.xp,
+                                level: data.level,
+                                nextLevelXp: data.next_level_xp,
+                                lastDailyBonusClaim: data.last_daily_bonus_claim ? new Date(data.last_daily_bonus_claim) : null,
+                                lastQuickBonusClaim: data.last_quick_bonus_claim ? new Date(data.last_quick_bonus_claim) : null
+                            };
+                            // Play level up sound if level increased
+                            if (prevUser.level !== 1 && newUserState.level > prevUser.level) {
+                                playLevelUpSound();
+                                showCustomModal(`🎉 Ви досягли Рівня ${newUserState.level}! 🎉`, "Підвищення Рівня!");
+                            }
+                            return newUserState;
+                        });
+                        sendTelegramLog('User data fetched and updated successfully from backend.');
+                    } else {
+                         sendTelegramLog('No valid user ID available for fetching data. Skipping API call.', 'JS_WARN');
+                         setUser(prevUser => ({
+                            ...prevUser,
                             userId: currentUserId,
                             username: currentUsername,
-                            balance: data.balance,
-                            xp: data.xp,
-                            level: data.level,
-                            nextLevelXp: data.next_level_xp,
-                            lastDailyBonusClaim: data.last_daily_bonus_claim ? new Date(data.last_daily_bonus_claim) : null,
-                            lastQuickBonusClaim: data.last_quick_bonus_claim ? new Date(data.last_quick_bonus_claim) : null
-                        };
-                        // Play level up sound if level increased
-                        if (prevUser.level !== 1 && newUserState.level > prevUser.level) {
-                            playLevelUpSound();
-                            showCustomModal(`🎉 Ви досягли Рівня ${newUserState.level}! 🎉`, "Підвищення Рівня!");
-                        }
-                        return newUserState;
-                    });
-                    sendTelegramLog('User data fetched and updated successfully.');
+                            balance: 1000, // Default balance for unauthenticated dummy users
+                            xp: 0,
+                            level: 1,
+                            nextLevelXp: 100
+                         }));
+                    }
                 } catch (err) {
                     console.error('Error fetching user data:', err);
                     setError(err.message || 'Помилка звʼязку з сервером. Перевірте зʼєднання.');
@@ -140,14 +159,14 @@
                 } finally {
                     setIsLoading(false);
                 }
-            }, [sendTelegramLog]);
+            }, [sendTelegramLog, API_BASE_URL]); // Add API_BASE_URL to dependencies
+
 
             useEffect(() => {
-                fetchUserData();
-                // Set up interval to refresh balance periodically if needed, or rely on game actions
-                // const interval = setInterval(fetchUserData, 60000); // refresh every 60 seconds
-                // return () => clearInterval(interval);
-            }, [fetchUserData]);
+                // This useEffect runs after initial render and when fetchUserData changes
+                // Call fetchUserData directly.
+                fetchUserData(); 
+            }, [fetchUserData]); // Dependency array to prevent infinite loop
 
             return (
                 <UserContext.Provider value={{ user, setUser, fetchUserData, isLoading, error, API_BASE_URL, sendTelegramLog }}>
@@ -179,34 +198,30 @@
                 document.getElementById('audioPrompt').style.display = 'none';
             }
 
-            // Initialize sounds ONLY after Tone.start() is successful
-            spinStartSound = new Tone.MembraneSynth({ envelope: { attack: 0.01, decay: 0.1, sustain: 0.05, release: 0.1 } }).toDestination();
-            reelStopSound = new Tone.MembraneSynth({ envelope: { attack: 0.005, decay: 0.05, sustain: 0.01, release: 0.1 } }).toDestination();
-            winSound = new Tone.PolySynth(Tone.Synth, { oscillator: { type: "sine" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 } }).toDestination();
-            bigWinSound = new Tone.PolySynth(Tone.Synth, { oscillator: { type: "triangle" }, envelope: { attack: 0.05, decay: 0.5, sustain: 0.2, release: 1.0 } }).toDestination();
-            loseSound = new Tone.MembraneSynth({ oscillator: { type: "square" }, envelope: { attack: 0.01, decay: 0.3, sustain: 0.1, release: 0.4 } }).toDestination();
-            levelUpSound = new Tone.PolySynth(Tone.Synth, { oscillator: { type: "sawtooth" }, envelope: { attack: 0.02, decay: 0.3, sustain: 0.2, release: 0.8 } }).toDestination();
-            dailyBonusSound = new Tone.MembraneSynth({ oscillator: { type: "triangle" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 } }).toDestination();
-            quickBonusSound = new Tone.PolySynth(Tone.Synth, { oscillator: { type: "triangle" }, envelope: { attack: 0.01, decay: 0.1, sustain: 0.05, release: 0.3 } }).toDestination();
-            coinFlipSound = new Tone.MembraneSynth({ oscillator: { type: "square" }, envelope: { attack: 0.01, decay: 0.15, sustain: 0.05, release: 0.2 } }).toDestination();
-
-            // Store Tone context in window for easy access from other scripts if needed, though primarily used here
-            window.myToneContext = {
-                spinStartSound, reelStopSound, winSound, bigWinSound, loseSound, levelUpSound,
-                dailyBonusSound, quickBonusSound, coinFlipSound
-            };
+            // Initialize sounds ONLY after Tone.start() is successful or if already running
+            if (!spinStartSound) { // Prevent re-initialization if already done
+                spinStartSound = new Tone.MembraneSynth({ envelope: { attack: 0.01, decay: 0.1, sustain: 0.05, release: 0.1 } }).toDestination();
+                reelStopSound = new Tone.MembraneSynth({ envelope: { attack: 0.005, decay: 0.05, sustain: 0.01, release: 0.1 } }).toDestination();
+                winSound = new Tone.PolySynth(Tone.Synth, { oscillator: { type: "sine" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 } }).toDestination();
+                bigWinSound = new Tone.PolySynth(Tone.Synth, { oscillator: { type: "triangle" }, envelope: { attack: 0.05, decay: 0.5, sustain: 0.2, release: 1.0 } }).toDestination();
+                loseSound = new Tone.MembraneSynth({ oscillator: { type: "square" }, envelope: { attack: 0.01, decay: 0.3, sustain: 0.1, release: 0.4 } }).toDestination();
+                levelUpSound = new Tone.PolySynth(Tone.Synth, { oscillator: { type: "sawtooth" }, envelope: { attack: 0.02, decay: 0.3, sustain: 0.2, release: 0.8 } }).toDestination();
+                dailyBonusSound = new Tone.MembraneSynth({ oscillator: { type: "triangle" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 } }).toDestination();
+                quickBonusSound = new Tone.PolySynth(Tone.Synth, { oscillator: { type: "triangle" }, envelope: { attack: 0.01, decay: 0.1, sustain: 0.05, release: 0.3 } }).toDestination();
+                coinFlipSound = new Tone.MembraneSynth({ oscillator: { type: "square" }, envelope: { attack: 0.01, decay: 0.15, sustain: 0.05, release: 0.2 } }).toDestination();
+            }
         }
 
         // Functions to play sounds - check if sound objects are initialized
-        function playSpinStartSound() { if (window.myToneContext?.spinStartSound && Tone.context.state === 'running') window.myToneContext.spinStartSound.triggerAttackRelease("C4", "8n"); }
-        function playReelStopSound(note = "D4") { if (window.myToneContext?.reelStopSound && Tone.context.state === 'running') window.myToneContext.reelStopSound.triggerAttackRelease(note, "16n"); }
-        function playWinSoundEffect() { if (window.myToneContext?.winSound && Tone.context.state === 'running') window.myToneContext.winSound.triggerAttackRelease(["C5", "E5", "G5"], "4n"); }
-        function playBigWinSoundEffect() { if (window.myToneContext?.bigWinSound && Tone.context.state === 'running') window.myToneContext.bigWinSound.triggerAttackRelease(["C5", "G5", "C6"], "1n"); }
-        function playLoseSoundEffect() { if (window.myToneContext?.loseSound && Tone.context.state === 'running') window.myToneContext.loseSound.triggerAttackRelease("C3", "4n"); }
-        function playLevelUpSound() { if (window.myToneContext?.levelUpSound && Tone.context.state === 'running') window.myToneContext.levelUpSound.triggerAttackRelease(["E4", "G4", "C5"], "0.8n"); }
-        function playDailyBonusSound() { if (window.myToneContext?.dailyBonusSound && Tone.context.state === 'running') window.myToneContext.dailyBonusSound.triggerAttackRelease("G4", "0.5n"); }
-        function playQuickBonusSound() { if (window.myToneContext?.quickBonusSound && Tone.context.state === 'running') window.myToneContext.quickBonusSound.triggerAttackRelease("A4", "0.2n"); }
-        function playCoinFlipSound() { if (window.myToneContext?.coinFlipSound && Tone.context.state === 'running') window.myToneContext.coinFlipSound.triggerAttackRelease("C5", "0.1s"); }
+        function playSpinStartSound() { if (spinStartSound && Tone.context.state === 'running') spinStartSound.triggerAttackRelease("C4", "8n"); }
+        function playReelStopSound(note = "D4") { if (reelStopSound && Tone.context.state === 'running') reelStopSound.triggerAttackRelease(note, "16n"); }
+        function playWinSoundEffect() { if (winSound && Tone.context.state === 'running') winSound.triggerAttackRelease(["C5", "E5", "G5"], "4n"); }
+        function playBigWinSoundEffect() { if (bigWinSound && Tone.context.state === 'running') bigWinSound.triggerAttackRelease(["C5", "G5", "C6"], "1n"); }
+        function playLoseSoundEffect() { if (loseSound && Tone.context.state === 'running') loseSound.triggerAttackRelease("C3", "4n"); }
+        function playLevelUpSound() { if (levelUpSound && Tone.context.state === 'running') levelUpSound.triggerAttackRelease(["E4", "G4", "C5"], "0.8n"); }
+        function playDailyBonusSound() { if (dailyBonusSound && Tone.context.state === 'running') dailyBonusSound.triggerAttackRelease("G4", "0.5n"); }
+        function playQuickBonusSound() { if (quickBonusSound && Tone.context.state === 'running') quickBonusSound.triggerAttackRelease("A4", "0.2n"); }
+        function playCoinFlipSound() { if (coinFlipSound && Tone.context.state === 'running') coinFlipSound.triggerAttackRelease("C5", "0.1s"); }
 
 
         // -----------------------------------------------------------------------------
@@ -219,7 +234,7 @@
                 modalMessageElement.innerHTML = `<h3 class="text-xl font-bold mb-2">${title}</h3><p>${msg}</p>`;
                 modalElement.classList.add('active');
                 if (window.Telegram && window.Telegram.WebApp) {
-                    window.Telegram.WebApp.sendData(`JS_LOG: Showing modal: ${title} - ${msg.substring(0, Math.min(msg.length, 50))}`);
+                    Telegram.WebApp.sendData(`JS_LOG: Showing modal: ${title} - ${msg.substring(0, Math.min(msg.length, 50))}`);
                 }
             }
         }
@@ -329,7 +344,12 @@
                     showCustomModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб грати.', "Недоступно");
                     return;
                 }
-                if (isSpinning || user.balance < BET_AMOUNT) return;
+                if (isSpinning || user.balance < BET_AMOUNT) {
+                    if (user.balance < BET_AMOUNT) {
+                        showCustomModal('Недостатньо фантиків для спіна!', "Низький Баланс");
+                    }
+                    return;
+                }
 
                 setIsSpinning(true);
                 setMessage('');
@@ -442,7 +462,12 @@
                     showCustomModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб грати.', "Недоступно");
                     return;
                 }
-                if (isFlipping || user.balance < COIN_FLIP_BET_AMOUNT) return;
+                if (isFlipping || user.balance < COIN_FLIP_BET_AMOUNT) {
+                    if (user.balance < COIN_FLIP_BET_AMOUNT) {
+                        showCustomModal('Недостатньо фантиків для підкидання монетки!', "Низький Баланс");
+                    }
+                    return;
+                }
 
                 setIsFlipping(true);
                 setMessage('');
@@ -843,6 +868,29 @@
             const [currentPage, setCurrentPage] = useState('slots'); // 'slots', 'coin_flip', 'leaderboard'
 
             const renderGame = () => {
+                if (isLoading) {
+                    return (
+                        <div className="flex flex-col items-center justify-center w-full h-full text-white">
+                            <p className="text-xl">Завантаження даних гравця...</p>
+                        </div>
+                    );
+                }
+
+                if (error) {
+                    return (
+                        <div className="flex flex-col items-center justify-center w-full h-full text-white text-center p-4">
+                            <p className="text-xl text-red-500 font-bold mb-4">Помилка завантаження:</p>
+                            <p className="text-lg mb-6">{error}</p>
+                            <button 
+                                onClick={fetchUserData}
+                                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-full text-lg shadow-lg transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95"
+                            >
+                                Спробувати знову
+                            </button>
+                        </div>
+                    );
+                }
+
                 switch (currentPage) {
                     case 'slots':
                         return <SlotMachine />;
@@ -858,29 +906,14 @@
             const handleShowLeaderboard = () => {
                 setCurrentPage('leaderboard');
             };
+            
+            // Log for App component render
+            useEffect(() => {
+                if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
+                    Telegram.WebApp.sendData(`JS_LOG: App component rendered. Current page: ${currentPage}. IsLoading: ${isLoading}. Error: ${error}`);
+                }
+            }, [currentPage, isLoading, error]);
 
-            if (isLoading) {
-                return (
-                    <div className="flex flex-col items-center justify-center w-screen h-screen bg-gradient-to-br from-purple-900 via-gray-900 to-indigo-900 text-white">
-                        <p className="text-xl">Завантаження гри...</p>
-                    </div>
-                );
-            }
-
-            if (error && !isLoading) {
-                return (
-                    <div className="flex flex-col items-center justify-center w-screen h-screen bg-gradient-to-br from-purple-900 via-gray-900 to-indigo-900 text-white text-center p-4">
-                        <p className="text-xl text-red-500 font-bold mb-4">Помилка завантаження:</p>
-                        <p className="text-lg mb-6">{error}</p>
-                        <button 
-                            onClick={fetchUserData}
-                            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-full text-lg shadow-lg transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95"
-                        >
-                            Спробувати знову
-                        </button>
-                    </div>
-                );
-            }
 
             return (
                 <div className="casino-app-container relative w-full h-full flex flex-col items-center justify-between bg-gradient-to-br from-purple-900 via-gray-900 to-indigo-900 text-white overflow-hidden">
@@ -937,44 +970,65 @@
         
         // This is the core mounting logic of the React app
         // It runs AFTER the Babel script has parsed everything above
-        document.addEventListener('DOMContentLoaded', () => {
-            const rootElement = document.getElementById('root');
-            const initialMessage = document.getElementById('initialLoadingMessage');
-
-            if (!rootElement) {
-                console.error("Error: Root element with ID 'root' not found for ReactDOM.createRoot.");
+        // And we ensure React and ReactDOM are actually loaded
+        try {
+            if (typeof React === 'undefined' || typeof ReactDOM === 'undefined') {
+                const rootElement = document.getElementById('root');
+                if (rootElement) {
+                    rootElement.innerHTML = `<p class="text-red-500 text-center mt-10 text-lg">
+                        Критична помилка: React або ReactDOM не завантажено. <br/> Перевірте підключення CDN.
+                    </p>`;
+                }
                 if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
-                    Telegram.WebApp.sendData('JS_ERROR: Root element not found for ReactDOM.');
+                    Telegram.WebApp.sendData('JS_FATAL_REACT_ERROR: React or ReactDOM undefined.');
                 }
-                if (initialMessage) {
-                    initialMessage.textContent = 'Критична помилка: Кореневий елемент не знайдено.';
-                    initialMessage.classList.add('text-red-500');
+                console.error("React or ReactDOM is undefined. Check CDN scripts.");
+            } else {
+                const rootElement = document.getElementById('root');
+                const initialMessage = document.getElementById('initialLoadingMessage');
+
+                if (!rootElement) {
+                    console.error("Error: Root element with ID 'root' not found for ReactDOM.createRoot.");
+                    if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
+                        Telegram.WebApp.sendData('JS_ERROR: Root element not found for ReactDOM.');
+                    }
+                    if (initialMessage) {
+                        initialMessage.textContent = 'Критична помилка: Кореневий елемент не знайдено.';
+                        initialMessage.classList.add('text-red-500');
+                    }
+                } else {
+                    // Remove loading message
+                    if (initialMessage) {
+                        initialMessage.remove();
+                    }
+
+                    const root = ReactDOM.createRoot(rootElement);
+                    root.render(
+                        <React.StrictMode>
+                            <UserProvider>
+                                <App />
+                            </UserProvider>
+                        </React.StrictMode>
+                    );
+
+                    if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
+                        Telegram.WebApp.sendData('JS_LOG: React app rendered successfully into DOM.');
+                    }
                 }
-                return;
             }
-
-            // At this point, App and UserProvider should be defined within this script's scope
-            // We don't need `window.App` or `window.UserProvider` anymore because all code is in one script
-            // and React components are functions defined within this scope.
-
-            // If everything above ran without syntax errors, App and UserProvider are available
-            if (initialMessage) {
-                initialMessage.remove(); // Remove loading message
+        } catch (e) {
+            console.error("Error during final React mounting:", e);
+            const rootElement = document.getElementById('root');
+            if (rootElement) {
+                rootElement.innerHTML = `<p class="text-red-500 text-center mt-10 text-lg">
+                    Невідома помилка при запуску гри: <br/> ${e.message}
+                    <br/> Перевірте консоль браузера або логи Render.
+                </p>`;
             }
-
-            const root = ReactDOM.createRoot(rootElement);
-            root.render(
-                <React.StrictMode>
-                    <UserProvider>
-                        <App />
-                    </UserProvider>
-                </React.StrictMode>
-            );
-
             if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
-                Telegram.WebApp.sendData('JS_LOG: React app rendered successfully into DOM.');
+                Telegram.WebApp.sendData(`JS_FATAL_REACT_MOUNT_ERROR: ${e.message.substring(0, Math.min(e.message.length, 100))}`);
             }
-        }); // End DOMContentLoaded
+        }
     </script>
 </body>
 </html>
