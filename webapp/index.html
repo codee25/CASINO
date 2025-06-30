@@ -14,10 +14,10 @@
                         sans: ['Inter', 'sans-serif'],
                     },
                     colors: {
-                        primary: '#6B46C1', // Example primary color
-                        secondary: '#9F7AEA', // Example secondary color
-                        darkblue: '#1A202C', // Dark background
-                        darkgreen: '#1D401D', // Dark green for game areas
+                        primary: '#6B46C1', 
+                        secondary: '#9F7AEA', 
+                        darkblue: '#1A202C', 
+                        darkgreen: '#1D401D', 
                     }
                 }
             }
@@ -26,8 +26,8 @@
     <style>
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #0d1117; /* GitHub Dark default background */
-            color: #e2e8f0; /* Light text for dark background */
+            background-color: #0d1117; 
+            color: #e2e8f0; 
         }
         .container {
             max-width: 500px;
@@ -39,10 +39,10 @@
             align-items: center;
             width: 80px;
             height: 80px;
-            background-color: #2D3748; /* Darker gray for reels */
+            background-color: #2D3748; 
             border-radius: 10px;
-            font-size: 3em; /* Larger symbols */
-            animation: spin-blur 0.5s infinite linear; /* Animation for spinning effect */
+            font-size: 3em; 
+            animation: spin-blur 0.5s infinite linear; 
         }
         .symbol-reel.stop {
             animation: none;
@@ -75,10 +75,10 @@
             font-size: 1em;
         }
         .game-section {
-            display: none; /* Приховано за замовчуванням */
+            display: none; 
         }
         .game-section.active {
-            display: block; /* Показано, якщо активний */
+            display: block; 
         }
         .spinner {
             border: 4px solid rgba(255, 255, 255, 0.3);
@@ -205,15 +205,15 @@
     </div>
 
     <script>
-        // Ініціалізація Telegram WebApp
+        // Initialize Telegram WebApp
         Telegram.WebApp.ready();
         const userId = Telegram.WebApp.initDataUnsafe.user.id;
         const username = Telegram.WebApp.initDataUnsafe.user.username || Telegram.WebApp.initDataUnsafe.user.first_name || `Гравець ${String(userId).slice(-4)}`;
 
         // =========================================================
-        // ВАЖЛИВО: Налаштуйте цей URL для вашого бекенду на Render.com
-        // Замініть 'YOUR_RENDER_BACKEND_HOSTNAME' на домен вашого Render Web Service
-        // Наприклад: 'casino-0h0l.onrender.com'
+        // IMPORTANT: Configure this URL for your backend on Render.com
+        // Replace 'YOUR_RENDER_BACKEND_HOSTNAME' with the domain of your Render Web Service
+        // For example: 'casino-0h0l.onrender.com'
         const BACKEND_HOSTNAME = 'YOUR_RENDER_BACKEND_HOSTNAME'; 
         // =========================================================
 
@@ -222,7 +222,7 @@
         const API_BASE_URL = `${protocol}//${BACKEND_HOSTNAME}/api`;
         const WS_BASE_URL = `${wsProtocol}//${BACKEND_HOSTNAME}/ws`;
 
-        // UI Елементи
+        // UI Elements
         const userBalanceSpan = document.getElementById('userBalance');
         const userXPSpan = document.getElementById('userXP');
         const userLevelSpan = document.getElementById('userLevel');
@@ -235,20 +235,20 @@
         const gameNavButtons = document.querySelectorAll('.game-nav-btn');
         const gameSections = document.querySelectorAll('.game-section');
 
-        // Слоти
+        // Slots
         const reel1 = document.getElementById('reel1');
         const reel2 = document.getElementById('reel2');
         const reel3 = document.getElementById('reel3');
         const spinButton = document.getElementById('spinButton');
         const slotMessage = document.getElementById('slotMessage');
 
-        // Монетка
+        // Coin Flip
         const coinImage = document.getElementById('coinImage');
         const headsButton = document.getElementById('headsButton');
         const tailsButton = document.getElementById('tailsButton');
         const coinflipMessage = document.getElementById('coinflipMessage');
 
-        // Блекджек
+        // Blackjack
         const blackjackStatus = document.getElementById('blackjackStatus');
         const blackjackTimer = document.getElementById('blackjackTimer');
         const timerCountdown = document.getElementById('timerCountdown');
@@ -264,19 +264,19 @@
         let blackjackSocket = null;
         let currentRoomId = null;
 
-        // Лідерборд
+        // Leaderboard
         const leaderboardList = document.getElementById('leaderboardList');
 
-        // --- Загальні функції UI ---
+        // --- General UI Functions ---
         function updateUserInfo(data) {
             userBalanceSpan.textContent = data.balance;
             userXPSpan.textContent = data.xp;
             userLevelSpan.textContent = `РІВЕНЬ: ${data.level}`;
             userNextLevelXPSpan.textContent = data.next_level_xp;
             const xpPercentage = (data.xp / data.next_level_xp) * 100;
-            xpProgressBar.style.width = `${Math.min(xpPercentage, 100)}%`; // Обмежуємо 100%
+            xpProgressBar.style.width = `${Math.min(xpPercentage, 100)}%`; 
 
-            // Оновлення таймерів бонусів
+            // Update bonus timers
             updateBonusButton(dailyBonusBtn, data.last_daily_bonus_claim, 24 * 60 * 60, "Щоденна Винагорода");
             updateBonusButton(quickBonusBtn, data.last_quick_bonus_claim, 15 * 60, "Швидка Винагорода");
         }
@@ -316,11 +316,10 @@
             } catch (error) {
                 console.error('Error fetching user info:', error);
                 Telegram.WebApp.sendData(`JS_ERROR: Error fetching user info: ${error.message}`);
-                // Можно показать сообщение об ошибке пользователю
             }
         }
 
-        // --- Навігація між іграми ---
+        // --- Game Navigation ---
         gameNavButtons.forEach(button => {
             button.addEventListener('click', () => {
                 const game = button.dataset.game;
@@ -329,13 +328,13 @@
                 });
                 document.getElementById(`${game}-section`).classList.add('active');
 
-                // Закриваємо WebSocket при переході з Блекджеку
+                // Close WebSocket when navigating away from Blackjack
                 if (blackjackSocket && blackjackSocket.readyState === WebSocket.OPEN) {
                     blackjackSocket.close();
-                    blackjackSocket = null; // Очищаємо посилання
+                    blackjackSocket = null; 
                     console.log("Blackjack WebSocket closed.");
                 }
-                // Відкриваємо WebSocket при переході на Блекджек
+                // Open WebSocket when navigating to Blackjack
                 if (game === 'blackjack') {
                     connectBlackjackWebSocket();
                 } else if (game === 'leaderboard') {
@@ -344,7 +343,7 @@
             });
         });
 
-        // --- Слоти ---
+        // --- Slots ---
         const SLOT_SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀', '⭐', '💰'];
         
         function animateReels() {
@@ -356,7 +355,7 @@
                 reel1.textContent = SLOT_SYMBOLS[Math.floor(Math.random() * SLOT_SYMBOLS.length)];
                 reel2.textContent = SLOT_SYMBOLS[Math.floor(Math.random() * SLOT_SYMBOLS.length)];
                 reel3.textContent = SLOT_SYMBOLS[Math.floor(Math.random() * SLOT_SYMBOLS.length)];
-            }, 100); // Швидкість анімації
+            }, 100); 
 
             return animationInterval;
         }
@@ -365,7 +364,6 @@
             spinButton.disabled = true;
             slotMessage.textContent = 'Крутимо...';
             
-            // Запускаємо анімацію барабанів
             const animationInterval = animateReels();
 
             try {
@@ -382,7 +380,7 @@
 
                 const data = await response.json();
 
-                // Зупиняємо анімацію після отримання результату, але перед затримкою
+                // Stop animation after receiving result, but before delay
                 clearInterval(animationInterval);
                 reel1.classList.add('stop');
                 reel2.classList.add('stop');
@@ -391,10 +389,10 @@
                 reel2.textContent = data.symbols[1];
                 reel3.textContent = data.symbols[2];
                 
-                // === ДОДАНО: ЗАтримка перед оновленням UI ===
-                await new Promise(resolve => setTimeout(resolve, 1500)); // Затримка 1.5 секунди
+                // === ADDED: DELAY before updating UI ===
+                await new Promise(resolve => setTimeout(resolve, 1500)); // 1.5 second delay
 
-                updateUserInfo(data); // Оновлюємо інформацію про користувача
+                updateUserInfo(data); 
                 slotMessage.textContent = `Випало: ${data.symbols.join(' ')}! Виграш: ${data.winnings} фантиків. ${data.message || ''}`;
                 if (data.winnings > 0) {
                     slotMessage.classList.remove('text-red-400');
@@ -415,7 +413,7 @@
             }
         });
 
-        // --- Підкидання Монетки ---
+        // --- Coin Flip ---
         headsButton.addEventListener('click', () => coinFlipGame('heads'));
         tailsButton.addEventListener('click', () => coinFlipGame('tails'));
 
@@ -423,7 +421,7 @@
             headsButton.disabled = true;
             tailsButton.disabled = true;
             coinflipMessage.textContent = 'Монетка в повітрі...';
-            coinImage.src = "https://placehold.co/100x100/FFD700/000?text=?"; // Скидаємо зображення
+            coinImage.src = "https://placehold.co/100x100/FFD700/000?text=?"; 
             
             try {
                 const response = await fetch(`${API_BASE_URL}/coin_flip`, {
@@ -439,8 +437,8 @@
 
                 const data = await response.json();
                 
-                // Затримка для анімації монетки
-                await new Promise(resolve => setTimeout(resolve, 1000)); // 1 секунда
+                // Delay for coin animation
+                await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second
 
                 const resultText = data.result === 'heads' ? 'Орел' : 'Решка';
                 coinImage.src = `https://placehold.co/100x100/${data.result === 'heads' ? '00FF00' : 'FF0000'}/FFF?text=${resultText}`;
@@ -466,7 +464,7 @@
             }
         }
 
-        // --- Бонуси ---
+        // --- Bonuses ---
         dailyBonusBtn.addEventListener('click', async () => {
             dailyBonusBtn.disabled = true;
             try {
@@ -525,7 +523,7 @@
             }
         });
 
-        // --- Блекджек (WebSocket) ---
+        // --- Blackjack (WebSocket) ---
         function connectBlackjackWebSocket() {
             blackjackStatus.textContent = 'Підключення до гри...';
             blackjackMessage.textContent = '';
@@ -533,25 +531,25 @@
             blackjackHitBtn.disabled = true;
             blackjackStandBtn.disabled = true;
             blackjackBetInput.disabled = true;
-            waitingForPlayersText.classList.remove('hidden'); // Показати "Очікування гравців..."
+            waitingForPlayersText.classList.remove('hidden'); 
             dealerHandDiv.innerHTML = '';
             dealerScoreP.textContent = 'Рахунок: 0';
-            blackjackPlayersDiv.innerHTML = ''; // Очистити гравців
+            blackjackPlayersDiv.innerHTML = ''; 
 
-            // === ВИПРАВЛЕНО: Правильне формування WebSocket URL ===
+            // === FIXED: Correct WebSocket URL formation ===
+            // Ensure BACKEND_HOSTNAME is correctly set in the HTML itself
             blackjackSocket = new WebSocket(`${WS_BASE_URL}/${userId}`);
             
             blackjackSocket.onopen = (event) => {
                 console.log('WebSocket connection opened:', event);
                 blackjackStatus.textContent = 'Підключено! Очікування гравців...';
-                // Відправити запит на отримання поточного стану кімнати
                 blackjackSocket.send(JSON.stringify({ action: 'request_state' }));
             };
 
             blackjackSocket.onmessage = (event) => {
                 const msg = JSON.parse(event.data);
                 console.log('WebSocket message received:', msg);
-                blackjackMessage.textContent = ''; // Очистити попереднє повідомлення
+                blackjackMessage.textContent = ''; 
 
                 if (msg.type === 'error') {
                     blackjackStatus.textContent = `Помилка: ${msg.message}`;
@@ -559,12 +557,10 @@
                     return;
                 }
                 
-                // Оновлення стану кімнати
                 if (msg.room_id) {
                     currentRoomId = msg.room_id;
                     blackjackStatus.textContent = `Кімната: ${msg.room_id} | Статус: ${msg.status}`;
                     
-                    // Оновлення таймера
                     if (msg.status === 'starting_timer' && msg.timer > 0) {
                         blackjackTimer.classList.remove('hidden');
                         timerCountdown.textContent = msg.timer;
@@ -572,7 +568,6 @@
                         blackjackTimer.classList.add('hidden');
                     }
 
-                    // Відображення руки дилера
                     dealerHandDiv.innerHTML = '';
                     if (msg.dealer_hand && msg.dealer_hand.length > 0) {
                         msg.dealer_hand.forEach(cardStr => {
@@ -580,7 +575,7 @@
                             cardDiv.className = 'blackjack-card';
                             if (cardStr === 'Hidden') {
                                 cardDiv.classList.add('hidden-card');
-                                cardDiv.textContent = '🂠'; // Рубашка карти
+                                cardDiv.textContent = '🂠'; 
                             } else {
                                 cardDiv.textContent = cardStr;
                             }
@@ -589,12 +584,11 @@
                     }
                     dealerScoreP.textContent = `Рахунок: ${msg.dealer_score}`;
 
-                    // Відображення гравців
                     blackjackPlayersDiv.innerHTML = '';
                     if (msg.players && msg.players.length > 0) {
-                        waitingForPlayersText.classList.add('hidden'); // Приховати "Очікування гравців..."
+                        waitingForPlayersText.classList.add('hidden'); 
                         msg.players.forEach(player => {
-                            const isCurrentUser = player.user_id == userId; // Порівняння int з int
+                            const isCurrentUser = player.user_id == userId; 
                             const playerDiv = document.createElement('div');
                             playerDiv.className = `p-3 rounded-lg flex flex-col items-center shadow ${isCurrentUser ? 'bg-blue-700' : 'bg-gray-700'} ${player.user_id == msg.current_player_turn ? 'border-2 border-yellow-400' : ''}`;
                             
@@ -620,7 +614,6 @@
                         waitingForPlayersText.classList.remove('hidden');
                     }
 
-                    // Оновлення кнопок керування
                     blackjackBetInput.disabled = msg.status !== 'betting';
                     blackjackBetBtn.disabled = msg.status !== 'betting';
                     
@@ -629,7 +622,6 @@
                     blackjackStandBtn.disabled = !isMyTurn;
                 }
 
-                // Повідомлення про результат раунду
                 if (msg.type === 'round_result') {
                     blackjackMessage.textContent = msg.message;
                     if (msg.winnings > 0) {
@@ -639,7 +631,7 @@
                         blackjackMessage.classList.remove('text-green-400');
                         blackjackMessage.classList.add('text-red-400');
                     }
-                    updateUserInfo(msg); // Оновлення балансу після раунду
+                    updateUserInfo(msg); 
                 } else if (msg.type === 'game_message') {
                      blackjackMessage.textContent = msg.message;
                 } else if (msg.type === 'level_up') {
@@ -657,7 +649,7 @@
                 dealerHandDiv.innerHTML = 'Відключено';
                 dealerScoreP.textContent = 'Рахунок: 0';
                 blackjackPlayersDiv.innerHTML = '<p class="text-center text-red-400">Підключення втрачено. Перейдіть на іншу вкладку і поверніться, щоб спробувати знову.</p>';
-                blackjackTimer.classList.add('hidden'); // Приховати таймер
+                blackjackTimer.classList.add('hidden'); 
             };
 
             blackjackSocket.onerror = (error) => {
@@ -676,7 +668,7 @@
             }
             if (blackjackSocket && blackjackSocket.readyState === WebSocket.OPEN) {
                 blackjackSocket.send(JSON.stringify({ action: 'bet', amount: betAmount }));
-                blackjackBetBtn.disabled = true; // Вимкнути кнопку після відправки ставки
+                blackjackBetBtn.disabled = true; 
                 blackjackBetInput.disabled = true;
             }
         });
@@ -693,20 +685,20 @@
             }
         });
 
-        // --- Лідерборд ---
+        // --- Leaderboard ---
         async function fetchLeaderboard() {
             leaderboardList.innerHTML = '<p class="text-center text-gray-400 flex items-center justify-center gap-2"><div class="spinner"></div> Завантаження...</p>';
             try {
                 const response = await fetch(`${API_BASE_URL}/get_leaderboard`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({}) // Запит без даних, але POST
+                    body: JSON.stringify({}) 
                 });
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 const data = await response.json();
-                leaderboardList.innerHTML = ''; // Очистити перед заповненням
+                leaderboardList.innerHTML = ''; 
                 if (data.leaderboard && data.leaderboard.length > 0) {
                     data.leaderboard.forEach((entry, index) => {
                         const rank = index + 1;
@@ -730,20 +722,19 @@
         }
 
 
-        // Ініціалізація при завантаженні
+        // Initialization on load
         document.addEventListener('DOMContentLoaded', async () => {
             if (!Telegram.WebApp.initDataUnsafe || !Telegram.WebApp.initDataUnsafe.user) {
                 document.body.innerHTML = '<p class="text-center text-red-500">Це додаток Telegram Mini App. Будь ласка, відкрийте його через Telegram.</p>';
                 return;
             }
-            await fetchUserInfo(); // Завантажуємо дані користувача при старті
-            // Запускаємо WebSocket для Блекджеку при першому завантаженні, якщо це необхідно
-            // connectBlackjackWebSocket(); // Закоментовано, щоб підключалося тільки при переході на вкладку Блекджеку
+            await fetchUserInfo(); 
+            // If you want Blackjack to connect immediately on app open, uncomment this:
+            // connectBlackjackWebSocket(); 
         });
 
-        // Також потрібно оновлювати дані користувача через певні проміжки часу,
-        // або після кожної дії, яка змінює баланс/XP/рівень
-        // setInterval(fetchUserInfo, 30000); // Оновлювати дані кожні 30 секунд
+        // Optionally, update user data at regular intervals or after every action
+        // setInterval(fetchUserInfo, 30000); 
 
     </script>
 </body>

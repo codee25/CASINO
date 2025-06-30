@@ -2,8 +2,8 @@ aiogram>=3.7.0
 aiohttp>=3.9.0
 psycopg2-binary==2.9.6
 gunicorn==22.0.0
-aiohttp-cors>=0.7.0 # Можливо, більше не потрібен напряму, але не завадить
+aiohttp-cors>=0.7.0 # May not be strictly needed directly, but harmless
 fastapi
 uvicorn[standard]
 websockets
-pydantic # Додано, якщо його не було
+pydantic # IMPORTANT: Ensure this is present
