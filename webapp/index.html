@@ -182,6 +182,45 @@
                 }
             }, [sendTelegramLog, API_BASE_URL]);
 
+            // Debounce for sendWsMessage to prevent spamming request_state
+            const sendWsMessageDebounceTimer = useRef(null);
+            const sendWsMessage = useCallback((action, payload = {}) => {
+                // Clear any existing debounce timer for 'request_state' action
+                if (action === "request_state" && sendWsMessageDebounceTimer.current) {
+                    clearTimeout(sendWsMessageDebounceTimer.current);
+                }
+
+                // If it's a 'request_state' action, debounce it
+                if (action === "request_state") {
+                    sendWsMessageDebounceTimer.current = setTimeout(() => {
+                        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                            const message = { action, ...payload };
+                            wsRef.current.send(JSON.stringify(message));
+                            sendTelegramLog(`WS Sent (debounced): ${action} with payload ${JSON.stringify(payload).substring(0, 50)}`);
+                        } else {
+                            sendTelegramLog(`WS Error (debounced): Tried to send ${action} but WebSocket not open. Current readyState: ${wsRef.current ? wsRef.current.readyState : 'null'}`, 'JS_ERROR');
+                            if (user.userId && wsRef.current && wsRef.current.readyState !== WebSocket.CONNECTING) {
+                                sendTelegramLog('Attempting to re-establish WS connection after failed debounced send.', 'JS_WARN');
+                                connectBlackjackWebSocket();
+                            }
+                        }
+                    }, 500); // Debounce for 500ms
+                } else {
+                    // For other actions, send immediately
+                    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                        const message = { action, ...payload };
+                        wsRef.current.send(JSON.stringify(message));
+                        sendTelegramLog(`WS Sent (immediate): ${action} with payload ${JSON.stringify(payload).substring(0, 50)}`);
+                    } else {
+                        sendTelegramLog(`WS Error (immediate): Tried to send ${action} but WebSocket not open. Current readyState: ${wsRef.current ? wsRef.current.readyState : 'null'}`, 'JS_ERROR');
+                        if (user.userId && wsRef.current && wsRef.current.readyState !== WebSocket.CONNECTING) {
+                            sendTelegramLog('Attempting to re-establish WS connection after failed immediate send.', 'JS_WARN');
+                            connectBlackjackWebSocket();
+                        }
+                    }
+                }
+            }, [sendTelegramLog, user.userId]); // Removed connectBlackjackWebSocket from dependencies here, as it's called internally
+
             // Blackjack WebSocket Connection Management
             const connectBlackjackWebSocket = useCallback(() => {
                 if (!user.userId || !API_BASE_URL) {
@@ -189,19 +228,16 @@
                     return;
                 }
 
-                // If a WebSocket connection already exists and is open, reuse it.
                 if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                     sendTelegramLog('connectBlackjackWebSocket: Existing WS connection found and open, reusing.', 'JS_DEBUG');
                     return;
                 }
                 
-                // If a connection exists but is closing or closed, clear it.
                 if (wsRef.current && (wsRef.current.readyState === WebSocket.CLOSING || wsRef.current.readyState === WebSocket.CLOSED)) {
                     sendTelegramLog('connectBlackjackWebSocket: Existing WS connection found but closing/closed, clearing ref.', 'JS_DEBUG');
                     wsRef.current = null;
                 }
 
-                // If no active connection, establish a new one.
                 if (!wsRef.current) {
                     const websocketUrl = `wss://${new URL(API_BASE_URL).host}/ws/${user.userId}`;
                     sendTelegramLog(`connectBlackjackWebSocket: Attempting to establish NEW WebSocket to: ${websocketUrl}`);
@@ -210,7 +246,7 @@
                     newWs.onopen = () => {
                         sendTelegramLog("Blackjack WS: Connected.");
                         setBlackjackGameMessage("Підключено. Шукаємо кімнату...");
-                        sendWsMessage("request_state"); // Immediately request state on initial connection
+                        // Removed sendWsMessage("request_state") from here
                     };
 
                     newWs.onmessage = (event) => {
@@ -274,23 +310,7 @@
 
                     wsRef.current = newWs;
                 }
-            }, [user.userId, API_BASE_URL, sendTelegramLog, fetchUserData]);
-
-            // Function to send messages via the global WebSocket
-            const sendWsMessage = useCallback((action, payload = {}) => {
-                if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                    const message = { action, ...payload };
-                    wsRef.current.send(JSON.stringify(message));
-                    sendTelegramLog(`WS Sent: ${action} with payload ${JSON.stringify(payload).substring(0, 50)}`);
-                } else {
-                    sendTelegramLog(`WS Error: Tried to send ${action} but WebSocket not open. Current readyState: ${wsRef.current ? wsRef.current.readyState : 'null'}`, 'JS_ERROR');
-                    // Attempt to reconnect if not open and user is valid
-                    if (user.userId && wsRef.current && wsRef.current.readyState !== WebSocket.CONNECTING) {
-                        sendTelegramLog('Attempting to re-establish WS connection after failed send.', 'JS_WARN');
-                        connectBlackjackWebSocket(); // Try to reconnect
-                    }
-                }
-            }, [sendTelegramLog, user.userId, connectBlackjackWebSocket]);
+            }, [user.userId, API_BASE_URL, sendTelegramLog, fetchUserData, sendWsMessage]); // Added sendWsMessage to dependencies
 
 
             useEffect(() => {
@@ -312,6 +332,10 @@
                         wsRef.current.close(1000, "App unmounted.");
                     }
                     wsRef.current = null;
+                    // Clear debounce timer on unmount
+                    if (sendWsMessageDebounceTimer.current) {
+                        clearTimeout(sendWsMessageDebounceTimer.current);
+                    }
                 };
             }, [sendTelegramLog]);
 
@@ -450,7 +474,7 @@
         // -----------------------------------------------------------------------------
         const SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀'];
         const WILD_SYMBOL = '⭐';
-        const SCATTER_SYMBOL = '💰';
+        const SCATTER_SYMBOL = '�';
         const ALL_REEL_SYMBOLS = [...SYMBOLS, WILD_SYMBOL, SCATTER_SYMBOL];
         const REEL_HEIGHT_PX = 90; // Default height for a symbol in a reel
         const REEL_SPIN_CYCLES = 5;
@@ -840,7 +864,8 @@
         const BLACKJACK_BET_AMOUNT = 200; // Fixed bet amount for Blackjack
 
         const BlackjackGame = () => {
-            const { user, sendTelegramLog, blackjackRoomState, blackjackGameMessage, sendWsMessage, setBlackjackGameMessage } = useUser();
+            // Now get blackjack state and send function from context
+            const { user, sendTelegramLog, blackjackRoomState, blackjackGameMessage, sendWsMessage } = useUser();
             const [betInput, setBetInput] = useState(BLACKJACK_BET_AMOUNT);
             const [showBetModal, setShowBetModal] = useState(false);
             // Local state for timer to avoid re-rendering the whole component
