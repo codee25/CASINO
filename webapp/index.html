@@ -200,10 +200,7 @@
                         } else {
                             sendTelegramLog(`WS Error (debounced): Tried to send ${action} but WebSocket not open. Current readyState: ${wsRef.current ? wsRef.current.readyState : 'null'}`, 'JS_ERROR');
                             // Only attempt to re-establish if not already connecting
-                            if (user.userId && wsRef.current && wsRef.current.readyState !== WebSocket.CONNECTING) {
-                                sendTelegramLog('Attempting to re-establish WS connection after failed debounced send.', 'JS_WARN');
-                                // connectBlackjackWebSocket(); // Do not call here, let the component manage it
-                            }
+                            // connectBlackjackWebSocket(); // Do not call here, let the component manage it
                         }
                     }, 500); // Debounce for 500ms
                 } else {
@@ -215,10 +212,7 @@
                     } else {
                         sendTelegramLog(`WS Error (immediate): Tried to send ${action} but WebSocket not open. Current readyState: ${wsRef.current ? wsRef.current.readyState : 'null'}`, 'JS_ERROR');
                         // Only attempt to re-establish if not already connecting
-                        if (user.userId && wsRef.current && wsRef.current.readyState !== WebSocket.CONNECTING) {
-                            sendTelegramLog('Attempting to re-establish WS connection after failed immediate send.', 'JS_WARN');
-                            // connectBlackjackWebSocket(); // Do not call here, let the component manage it
-                        }
+                        // connectBlackjackWebSocket(); // Do not call here, let the component manage it
                     }
                 }
             }, [sendTelegramLog, user.userId]);
@@ -257,6 +251,14 @@
                     newWs.onmessage = (event) => {
                         try {
                             const message = JSON.parse(event.data);
+                            // Handle ping messages to keep connection alive
+                            if (message.type === "ping") {
+                                // Optionally send pong back, though server-side ping is usually enough
+                                // newWs.send(JSON.stringify({ type: "pong" }));
+                                sendTelegramLog("Blackjack WS: Received ping.");
+                                return; 
+                            }
+
                             sendTelegramLog(`Blackjack WS: Received: ${JSON.stringify(message).substring(0, 100)}`);
 
                             if (message.type === "error") {
@@ -323,18 +325,12 @@
 
                     wsRef.current = newWs;
                 }
-            }, [user.userId, API_BASE_URL, sendTelegramLog, fetchUserData, setUser]); // Removed sendWsMessage from dependencies here
+            }, [user.userId, API_BASE_URL, sendTelegramLog, fetchUserData, setUser]);
+
 
             useEffect(() => {
                 fetchUserData(); 
             }, []); 
-
-            // REMOVED: Automatic WebSocket connection on user data load
-            // useEffect(() => {
-            //     if (user.userId && !isLoading && !error) {
-            //         connectBlackjackWebSocket();
-            //     }
-            // }, [user.userId, isLoading, error, connectBlackjackWebSocket]);
 
             // Cleanup WebSocket on component unmount (when the entire app closes)
             useEffect(() => {
@@ -353,14 +349,20 @@
 
 
             const getGameStatusMessage = (state, currentUserId) => {
-                if (!state || !state.room_id) return "Очікування кімнати...";
+                if (!state || !state.room_id) {
+                    if (state.status === "connecting") return "Підключення до сервера...";
+                    if (state.status === "disconnected") return "Відключено від гри. Спробуйте оновити.";
+                    if (state.status === "error") return "Помилка гри. Спробуйте оновити.";
+                    return "Очікування кімнати...";
+                }
                 
                 const currentPlayer = state.players.find(p => p.user_id === currentUserId);
-                // If current user is not in the player list of this room, it means they might have just joined
-                // or the room state hasn't fully propagated, or they were removed.
+                
+                // Якщо поточний користувач не в списку гравців кімнати, але кімната активна
                 if (!currentPlayer && state.status !== "disconnected" && state.status !== "error") {
                      return "Приєднуємось до гри...";
                 }
+                // Якщо користувач відключений або помилка, і його немає в списку (або він був видалений)
                 if (!currentPlayer && (state.status === "disconnected" || state.status === "error")) {
                     return "Ви відключені від кімнати. Спробуйте оновити.";
                 }
@@ -368,8 +370,8 @@
 
                 switch (state.status) {
                     case "connecting": return "Підключення до сервера...";
-                    case "waiting": return `Очікування гравців (${state.player_count}/${state.min_players}). ..`;
-                    case "starting_timer": return `Гра розпочнеться через ${state.timer} секунд. Готуйтесь! (${state.player_count}/${state.min_players})`;
+                    case "waiting": return `Очікування гравців (${state.player_count}/${state.min_players})`;
+                    case "starting_timer": return `Гра розпочнеться через ${state.timer} секунд! (${state.player_count}/${state.min_players})`;
                     case "betting": return "Зробіть вашу ставку!";
                     case "playing": 
                         if (state.current_player_turn === currentUserId) {
@@ -992,7 +994,12 @@
 
                     {/* Dealer's Hand */}
                     <div className="dealer-area bg-gray-800 p-4 rounded-xl shadow-lg w-full max-w-lg mb-4 text-center border-2 border-green-700">
-                        <h2 className="text-2xl font-bold text-orange-400 mb-2">Дилер: {blackjackRoomState.status === "playing" || blackjackRoomState.status === "dealer_turn" || blackjackRoomState.status === "round_end" ? blackjackRoomState.dealer_score : (blackjackRoomState.dealer_hand.length > 1 ? blackjackRoomState.dealer_hand[0].slice(0,-1) : '')}</h2>
+                        {/* Прибрано статичний напис "Дилер:" */}
+                        <h2 className="text-2xl font-bold text-orange-400 mb-2">
+                            Дилер: {blackjackRoomState.status === "playing" || blackjackRoomState.status === "dealer_turn" || blackjackRoomState.status === "round_end" 
+                                ? blackjackRoomState.dealer_score 
+                                : (blackjackRoomState.dealer_hand.length > 1 ? blackjackRoomState.dealer_hand[0].slice(0,-1) : 'Приховано')}
+                        </h2>
                         <div className="flex justify-center gap-2 flex-wrap">
                             {blackjackRoomState.dealer_hand.map((cardStr, idx) => (
                                 <div key={idx} className="card-item">{getCardDisplay(cardStr)}</div>

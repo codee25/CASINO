@@ -133,7 +133,7 @@ def get_xp_for_next_level(level: int) -> int:
 PAYOUTS = {
     ('🍒', '🍒', '🍒'): 1000, ('🍋', '🍋', '🍋'): 800, ('🍊', '🍊', '🍊'): 600,
     ('🍇', '🍇', '🍇'): 400, ('🔔', '🔔', '🔔'): 300, ('💎', '💎', '💎'): 200,
-    ('🍀', '🍀', '🍀'): 150, ('⭐', '⭐', '⭐'): 2000, 
+    ('�', '🍀', '🍀'): 150, ('⭐', '⭐', '⭐'): 2000, 
     ('🍒', '🍒'): 100, ('🍋', '🍋'): 80, ('🍊', '🍊'): 60,
     ('🍇', '🍇'): 40, ('🔔', '🔔'): 30, ('💎', '💎'): 20,
     ('🍀', '🍀'): 10,
@@ -422,7 +422,7 @@ def coin_flip_game_logic(user_id: int | str, choice: str) -> Dict:
 
     level_up_message = ""
     if new_level > current_level:
-        level_up_message = f" � НОВИЙ РІВЕНЬ: {new_level}! 🎉"
+        level_up_message = f" 🎉 НОВИЙ РІВЕНЬ: {new_level}! 🎉"
 
     update_user_data(user_id, balance=new_balance, xp=new_xp, level=new_level)
 
@@ -757,11 +757,12 @@ class BlackjackRoom:
         self.deck = Deck()
         self.dealer_hand = Hand()
         self.current_turn_index = 0 # Індекс гравця, чий зараз хід
-        self.min_players = 1 # Змінено для тестування поодинці
+        self.min_players = 2 # Повернуто до 2 для мультиплеєра
         self.max_players = 5
         self.game_start_timer: Optional[asyncio.Task] = None
         self.timer_countdown: int = 0
         self.round_in_progress = False # Додано для відстеження активності раунду
+        self.ping_task: Optional[asyncio.Task] = None # Для heartbeat
 
     async def add_player(self, user_id: int, username: str, websocket: WebSocket):
         if len(self.players) >= self.max_players:
@@ -789,6 +790,11 @@ class BlackjackRoom:
             logger.info(f"Room {self.room_id}: Game start timer initiated for {self.timer_countdown} seconds.")
             await self.send_room_state_to_all() # Оновити стан з таймером
         
+        # Запускаємо ping-pong для підтримки з'єднання
+        if not self.ping_task or self.ping_task.done():
+            self.ping_task = asyncio.create_task(self._ping_players())
+            logger.info(f"Room {self.room_id}: Ping task started.")
+
         return True, "Приєднано до кімнати успішно."
 
     async def remove_player(self, user_id: int):
@@ -800,6 +806,9 @@ class BlackjackRoom:
                 # Якщо кімната порожня, скасувати таймер і видалити кімнату
                 if self.game_start_timer and not self.game_start_timer.done():
                     self.game_start_timer.cancel()
+                if self.ping_task and not self.ping_task.done():
+                    self.ping_task.cancel() # Скасувати ping-pong
+                    logger.info(f"Room {self.room_id}: Ping task cancelled.")
                 if self.room_id in blackjack_room_manager.rooms:
                     del blackjack_room_manager.rooms[self.room_id]
                 logger.info(f"Room {self.room_id} is empty and removed.")
@@ -816,6 +825,26 @@ class BlackjackRoom:
                 await self.send_room_state_to_all()
         else:
             logger.warning(f"Player {user_id} not found in room {self.room_id} for removal.")
+
+    async def _ping_players(self):
+        """Надсилає ping-повідомлення для підтримки WebSocket-з'єднання."""
+        while True:
+            await asyncio.sleep(15) # Надсилати ping кожні 15 секунд
+            if not self.players:
+                break # Вийти, якщо немає гравців
+            
+            # Створюємо список гравців для ітерації, щоб уникнути RuntimeError: dictionary changed size during iteration
+            players_to_ping = list(self.players.values()) 
+            for player in players_to_ping:
+                try:
+                    await player.websocket.send_json({"type": "ping"})
+                    logger.debug(f"Sent ping to player {player.user_id} in room {self.room_id}.")
+                except Exception as e:
+                    logger.warning(f"Failed to send ping to player {player.user_id} in room {self.room_id}: {e}. Removing player.")
+                    # Якщо ping не вдається, вважаємо гравця відключеним
+                    if player.user_id in self.players: # Перевірка, щоб уникнути KeyError, якщо гравець вже видалений
+                        await self.remove_player(player.user_id)
+
 
     async def send_room_state_to_all(self):
         state = self.get_current_state()
@@ -1135,23 +1164,22 @@ class BlackjackRoomManager:
                 del self.player_to_room[user_id]
                 logger.warning(f"Player {user_id} was mapped to non-existent room {room_id}. Cleaning up.")
 
-        # Шукаємо існуючу кімнату
+        # Пріоритет: шукаємо кімнату з 1 гравцем
         for room_id, room in self.rooms.items():
-            if room.status in ["waiting", "betting"] and len(room.players) < room.max_players:
+            if len(room.players) == 1 and room.status in ["waiting", "starting_timer", "betting"] and room.min_players == 2:
                 success, msg = await room.add_player(user_id, username, websocket)
                 if success:
                     self.player_to_room[user_id] = room_id
-                    logger.info(f"Player {user_id} joined existing room {room_id}. Current players: {len(room.players)}")
-                    
-                    # Якщо досягнуто мінімальної кількості гравців і гра не йде, запускаємо таймер
-                    if len(room.players) >= room.min_players and room.status == "waiting" and not room.round_in_progress:
-                        room.status = "starting_timer"
-                        if room.game_start_timer and not room.game_start_timer.done():
-                            room.game_start_timer.cancel()
-                        room.timer_countdown = 20
-                        room.game_start_timer = asyncio.create_task(self._start_game_after_delay(room_id, 20))
-                        logger.info(f"Room {room_id}: Game start timer initiated for 20 seconds.")
-                        await room.send_room_state_to_all()
+                    logger.info(f"Player {user_id} joined existing room {room_id} (filling 1/2).")
+                    return room_id
+
+        # Далі: шукаємо кімнату з менше ніж max_players, яка не в активній грі
+        for room_id, room in self.rooms.items():
+            if len(room.players) < room.max_players and room.status in ["waiting", "starting_timer", "betting"]:
+                success, msg = await room.add_player(user_id, username, websocket)
+                if success:
+                    self.player_to_room[user_id] = room_id
+                    logger.info(f"Player {user_id} joined existing room {room_id}.")
                     return room_id
 
         # Якщо не знайдено, створюємо нову кімнату
@@ -1162,7 +1190,6 @@ class BlackjackRoomManager:
         if success:
             self.player_to_room[user_id] = new_room_id
             logger.info(f"Player {user_id} created and joined new room {new_room_id}")
-            await new_room.send_room_state_to_all()
             return new_room_id
         
         return None # Якщо з якоїсь причини не вдалося приєднатися або створити
@@ -1230,9 +1257,10 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
 
     try:
         while True:
-            data = await websocket.receive_text()
+            # Очікуємо повідомлення від клієнта. Якщо з'єднання розірвано, receive_text() викличе WebSocketDisconnect
+            message_text = await websocket.receive_text()
             try:
-                message = json.loads(data)
+                message = json.loads(message_text)
                 action = message.get("action")
                 
                 logger.info(f"WS: Received message from {user_id_int} in room {room_id}: {message}")
@@ -1251,10 +1279,12 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                     await room.handle_action(user_id_int, action)
                 elif action == "request_state":
                     await room.send_room_state_to_all()
+                elif action == "pong": # Обробка pong-повідомлення
+                    logger.debug(f"Received pong from {user_id_int}.")
                 else:
                     await websocket.send_json({"type": "error", "message": "Невідома дія."})
             except json.JSONDecodeError:
-                logger.warning(f"Received non-JSON message from {user_id_int}: {data}")
+                logger.warning(f"Received non-JSON message from {user_id_int}: {message_text}")
                 await websocket.send_json({"type": "error", "message": "Неправильний формат повідомлення (очікується JSON)."})
             except Exception as e:
                 logger.error(f"Error handling WebSocket message from {user_id_int} in room {room_id}: {e}", exc_info=True)
@@ -1334,3 +1364,4 @@ async def on_shutdown():
     await dp.storage.close() 
     await bot.session.close() 
     logger.info("Bot session closed.")
+
