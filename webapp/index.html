@@ -192,8 +192,6 @@
                 // If a WebSocket connection already exists and is open, reuse it.
                 if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                     sendTelegramLog('connectBlackjackWebSocket: Existing WS connection found and open, reusing.', 'JS_DEBUG');
-                    // Request state to update the UI with current room info - only if we are on Blackjack page
-                    // This is now handled by the BlackjackGame component's useEffect
                     return;
                 }
                 
@@ -230,8 +228,10 @@
                                 showCustomModal(`🎉 Ви досягли Рівня ${message.level}! 🎉`, "Підвищення Рівня!");
                             } else if (message.room_id) { // It's a room state update
                                 setBlackjackRoomState(prevState => {
-                                    const newTimer = message.status === "starting_timer" ? (message.timer || 0) : 0;
-                                    return { ...message, timer: newTimer };
+                                    // We will now manage the timer locally in BlackjackGame component
+                                    // so we don't need to update it here from every WS message.
+                                    // The backend will send the initial timer value when status changes to "starting_timer".
+                                    return { ...message, timer: prevState.timer }; // Keep local timer
                                 });
                                 // Only update game message if it's not a round result message
                                 if (message.type !== "round_result") {
@@ -261,14 +261,14 @@
                     newWs.onclose = (event) => {
                         sendTelegramLog(`Blackjack WS: Disconnected. Code: ${event.code}, Reason: ${event.reason}.`, 'JS_WARN');
                         setBlackjackGameMessage("Відключено від гри. Спробуйте оновити.");
-                        setBlackjackRoomState(prev => ({ ...prev, status: "disconnected", room_id: null }));
+                        setBlackjackRoomState(prev => ({ ...prev, status: "disconnected", room_id: null, timer: 0 })); // Reset timer on disconnect
                         wsRef.current = null;
                     };
 
                     newWs.onerror = (error) => {
                         sendTelegramLog(`Blackjack WS: Error: ${error.message}`, 'JS_ERROR');
                         setBlackjackGameMessage(`Помилка підключення: ${error.message}`);
-                        setBlackjackRoomState(prev => ({ ...prev, status: "error", room_id: null }));
+                        setBlackjackRoomState(prev => ({ ...prev, status: "error", room_id: null, timer: 0 })); // Reset timer on error
                         wsRef.current = null;
                     };
 
@@ -840,20 +840,40 @@
         const BLACKJACK_BET_AMOUNT = 200; // Fixed bet amount for Blackjack
 
         const BlackjackGame = () => {
-            // Now get blackjack state and send function from context
-            const { user, sendTelegramLog, blackjackRoomState, blackjackGameMessage, sendWsMessage } = useUser();
+            const { user, sendTelegramLog, blackjackRoomState, blackjackGameMessage, sendWsMessage, setBlackjackGameMessage } = useUser();
             const [betInput, setBetInput] = useState(BLACKJACK_BET_AMOUNT);
             const [showBetModal, setShowBetModal] = useState(false);
+            // Local state for timer to avoid re-rendering the whole component
+            const [localTimer, setLocalTimer] = useState(0); 
 
-            // This useEffect will now only send request_state once when the component mounts
-            // or if the user.userId changes. It will NOT spam based on blackjackRoomState.status.
+            // Effect to request state when component mounts or user ID changes
             useEffect(() => {
                 if (user.userId) {
                     sendTelegramLog('BlackjackGame component mounted/user changed. Requesting WS state (once).');
                     sendWsMessage("request_state");
                 }
-            }, [user.userId, sendWsMessage, sendTelegramLog]); // Removed blackjackRoomState.status from dependencies
+            }, [user.userId, sendWsMessage, sendTelegramLog]);
 
+            // Effect to update local timer based on blackjackRoomState.status
+            // This will ensure the timer updates smoothly without re-rendering the whole game
+            useEffect(() => {
+                let timerInterval;
+                if (blackjackRoomState.status === "starting_timer" && blackjackRoomState.timer > 0) {
+                    setLocalTimer(blackjackRoomState.timer); // Set initial local timer from backend
+                    timerInterval = setInterval(() => {
+                        setLocalTimer(prevTimer => {
+                            if (prevTimer <= 1) {
+                                clearInterval(timerInterval);
+                                return 0;
+                            }
+                            return prevTimer - 1;
+                        });
+                    }, 1000);
+                } else {
+                    setLocalTimer(0); // Reset timer if not in starting_timer state
+                }
+                return () => clearInterval(timerInterval); // Cleanup interval on unmount or status change
+            }, [blackjackRoomState.status, blackjackRoomState.timer]); // Depend on backend timer for initial sync
 
             const getCardDisplay = (card) => {
                 if (card === "Hidden") return "🂠"; // Card back
@@ -912,10 +932,10 @@
                         <p className="text-xl font-bold text-yellow-300">{blackjackGameMessage}</p>
                     </div>
 
-                    {/* Timer display for starting game */}
-                    {blackjackRoomState.status === "starting_timer" && blackjackRoomState.timer > 0 && (
+                    {/* Timer display for starting game - now uses localTimer */}
+                    {blackjackRoomState.status === "starting_timer" && localTimer > 0 && (
                         <div className="text-4xl font-extrabold text-red-500 mb-4 animate-pulse-fast">
-                            {blackjackRoomState.timer}
+                            {localTimer}
                         </div>
                     )}
 
