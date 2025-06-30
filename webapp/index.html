@@ -40,7 +40,10 @@
 
         // Ensure Tone is globally available from the CDN script in index.html
         const Tone = window.Tone || {
-            context: { state: 'suspended', resume: async () => { console.warn("Tone.context.resume not available. Tone.js might not be loaded."); }, start: async () => { console.warn("Tone.context.start not available. Tone.js might not be loaded."); } }
+            context: { state: 'suspended', resume: async () => { console.warn("Tone.context.resume not available. Tone.js might not be loaded."); }, start: async () => { console.warn("Tone.context.start not available. Tone.js might not be loaded."); } },
+            MembraneSynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; },
+            PolySynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; },
+            NoiseSynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; }
         };
 
 
@@ -62,15 +65,13 @@
             });
             const [isLoading, setIsLoading] = useState(true);
             const [error, setError] = useState(null);
+            // Ref to prevent multiple concurrent fetches
+            const isFetchingRef = useRef(false);
 
-            // ===========================================================================================
-            // >>>>>>>>>>>>> ВАЖЛИВО: ОНОВІТЬ ЦЕЙ URL НА АКТУАЛЬНИЙ URL ВАШОГО WEB SERVICE НА RENDER.COM <<<<<<<<<<<<<<
-            // ПРИКЛАД: 'https://ваш-унікальний-домен.onrender.com'
-            // ЗАМІНІТЬ 'https://casino-0h0l.onrender.com' НА ВАШ ВЛАСНИЙ URL З Render.com
-            // ===========================================================================================
-            const API_BASE_URL = 'https://casino-0h0l.onrender.com'; // <--- ПЕРЕКОНАЙТЕСЯ, ЩО ЦЕ ВАШ АКТУАЛЬНИЙ URL
-            // ===========================================================================================
-
+            // Backend API URL (ВАШ АКТУАЛЬНИЙ URL!)
+            // !!! ВСТАВТЕ СЮДИ АКТУАЛЬНИЙ URL ВАШОГО WEB SERVICE (БОТА) НА RENDER.COM !!!
+            // НАПРИКЛАД: 'https://ваш-унікальний-домен.onrender.com'
+            const API_BASE_URL = 'https://casino-0h0l.onrender.com'; // <--- ЗМІНІТЬ ЦЕЙ РЯДОК!
 
             // Helper to send logs to Telegram bot for debugging
             const sendTelegramLog = useCallback((message, type = 'JS_LOG') => {
@@ -82,6 +83,12 @@
             }, []);
 
             const fetchUserData = useCallback(async () => {
+                if (isFetchingRef.current) {
+                    sendTelegramLog('fetchUserData: Already fetching, skipping call.', 'JS_DEBUG');
+                    return; // Prevent multiple concurrent fetches
+                }
+
+                isFetchingRef.current = true;
                 setIsLoading(true);
                 setError(null);
                 let currentUserId = null;
@@ -119,8 +126,8 @@
 
                         if (!response.ok) {
                             const errData = await response.json();
-                            sendTelegramLog(`Balance fetch API failed: ${errData.detail || 'Unknown error'}`, 'JS_ERROR');
-                            throw new Error(errData.detail || 'Failed to fetch user data');
+                            sendTelegramLog(`Balance fetch API failed: ${errData.error || 'Unknown error'}`, 'JS_ERROR');
+                            throw new Error(errData.error || 'Failed to fetch user data');
                         }
 
                         const data = await response.json();
@@ -161,13 +168,16 @@
                     sendTelegramLog(`Error during user data fetch: ${err.message}`, 'JS_ERROR');
                 } finally {
                     setIsLoading(false);
+                    isFetchingRef.current = false; // Reset fetching flag
                 }
             }, [sendTelegramLog, API_BASE_URL]);
 
 
             useEffect(() => {
+                // Fetch user data only once on component mount
+                // Subsequent updates will be triggered by fetchUserData calls from game actions
                 fetchUserData(); 
-            }, [fetchUserData]);
+            }, []); // Empty dependency array means this runs once on mount
 
             return (
                 <UserContext.Provider value={{ user, setUser, fetchUserData, isLoading, error, API_BASE_URL, sendTelegramLog }}>
@@ -367,10 +377,6 @@
 
                     if (response.ok) {
                         await animateReels(data.symbols); // Animate with actual results
-                        
-                        // === ДОДАНО: ЗАтримка перед оновленням UI ===
-                        await new Promise(resolve => setTimeout(resolve, 1500)); // Затримка 1.5 секунди
-
                         await fetchUserData(); // Update balance and XP from backend
 
                         if (data.winnings > 0) {
@@ -390,10 +396,10 @@
                             sendTelegramLog('Lose on spin.');
                         }
                     } else {
-                        showCustomModal(`❌ Помилка: ${data.detail || 'Невідома помилка сервера.'}`, "Помилка Спіна");
+                        showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка сервера.'}`, "Помилка Спіна");
                         setMessageClass('text-red-500 font-bold');
                         playLoseSoundEffect();
-                        sendTelegramLog(`Spin API failed: ${data.detail || 'Unknown'}`, 'JS_ERROR');
+                        sendTelegramLog(`Spin API failed: ${data.error || 'Unknown'}`, 'JS_ERROR');
                     }
                 } catch (error) {
                     console.error('Помилка при спіні:', error);
@@ -426,7 +432,7 @@
                         {/* Reel 3 */}
                         <div id="reel3" ref={reelRefs[2]} className="reel relative w-24 h-24 md:w-28 md:h-28 rounded-lg bg-gray-800 border-3 border-yellow-500 overflow-hidden shadow-inner transform-gpu">
                             <div className="reel-content absolute top-0 left-0 w-full h-full"></div>
-                            </div>
+                        </div>
                         <div className="absolute -bottom-3 left-1/2 transform -translate-x-1/2 w-3/4 h-2 bg-gradient-to-r from-red-500 to-yellow-400 rounded-b-lg shadow-lg"></div>
                     </div>
 
@@ -499,8 +505,8 @@
                         await fetchUserData(); // Update balance and XP from backend
                         sendTelegramLog(`Coin Flip Result: ${data.result}, Winnings: ${data.winnings}`);
                     } else {
-                        showCustomModal(`❌ Помилка: ${data.detail || 'Невідома помилка сервера.'}`, "Помилка Підкидання");
-                        sendTelegramLog(`Coin Flip API failed: ${data.detail || 'Unknown'}`, 'JS_ERROR');
+                        showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка сервера.'}`, "Помилка Підкидання");
+                        sendTelegramLog(`Coin Flip API failed: ${data.error || 'Unknown'}`, 'JS_ERROR');
                     }
                 } catch (error) {
                     console.error('Помилка при підкиданні монетки:', error);
@@ -601,8 +607,8 @@
 
                     if (!response.ok) {
                         const errData = await response.json();
-                        sendTelegramLog(`Leaderboard API error: ${errData.detail || 'Unknown'}`, 'JS_ERROR');
-                        throw new Error(errData.detail || 'Failed to fetch leaderboard data');
+                        sendTelegramLog(`Leaderboard API error: ${errData.error || 'Unknown'}`, 'JS_ERROR');
+                        throw new Error(errData.error || 'Failed to fetch leaderboard data');
                     }
 
                     const data = await response.json();
@@ -684,6 +690,8 @@
             const [gameMessage, setGameMessage] = useState("Підключення до гри...");
             const [betInput, setBetInput] = useState(BLACKJACK_BET_AMOUNT);
             const [showBetModal, setShowBetModal] = useState(false); // State to control bet input modal
+            // Ref to hold the WebSocket instance to prevent re-creation
+            const wsRef = useRef(null);
 
             const getCardDisplay = (card) => {
                 if (card === "Hidden") return "🂠"; // Card back
@@ -704,93 +712,122 @@
             };
 
             const sendWsMessage = useCallback((action, payload = {}) => {
-                if (ws && ws.readyState === WebSocket.OPEN) {
+                if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                     const message = { action, ...payload };
-                    ws.send(JSON.stringify(message));
+                    wsRef.current.send(JSON.stringify(message));
                     sendTelegramLog(`WS Sent: ${action} with payload ${JSON.stringify(payload).substring(0, 50)}`);
                 } else {
-                    sendTelegramLog(`WS Error: Tried to send ${action} but WebSocket not open.`, 'JS_ERROR');
+                    sendTelegramLog(`WS Error: Tried to send ${action} but WebSocket not open. Current readyState: ${wsRef.current ? wsRef.current.readyState : 'null'}`, 'JS_ERROR');
+                    // Optionally try to reconnect if not open
+                    if (wsRef.current && wsRef.current.readyState !== WebSocket.CONNECTING) {
+                        sendTelegramLog('Attempting to re-establish WS connection after failed send.', 'JS_WARN');
+                        // No direct reconnect logic here, relying on useEffect for initial connect
+                        // and the backend to handle multiple connection attempts gracefully
+                    }
                 }
-            }, [ws, sendTelegramLog]);
+            }, [sendTelegramLog]);
 
             useEffect(() => {
-                if (!user.userId || !API_BASE_URL) return;
+                if (!user.userId || !API_BASE_URL) {
+                    sendTelegramLog('Blackjack useEffect: User ID or API_BASE_URL not available, skipping WS connection.', 'JS_DEBUG');
+                    return;
+                }
 
-                // Dynamically determine WebSocket protocol based on API_BASE_URL
-                const apiBaseUrlObj = new URL(API_BASE_URL);
-                const wsProtocol = apiBaseUrlObj.protocol === 'https:' ? 'wss:' : 'ws:';
-                const websocketUrl = `${wsProtocol}//${apiBaseUrlObj.host}/ws/${user.userId}`;
+                // If a WebSocket connection already exists and is open, reuse it.
+                // This is crucial to prevent multiple connections.
+                if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                    sendTelegramLog('Blackjack useEffect: Existing WS connection found and open, reusing.', 'JS_DEBUG');
+                    // Request state to update the UI with current room info
+                    sendWsMessage("request_state");
+                    return;
+                }
+                
+                // If a connection exists but is closing or closed, clear it.
+                if (wsRef.current && (wsRef.current.readyState === WebSocket.CLOSING || wsRef.current.readyState === WebSocket.CLOSED)) {
+                    sendTelegramLog('Blackjack useEffect: Existing WS connection found but closing/closed, clearing ref.', 'JS_DEBUG');
+                    wsRef.current = null;
+                }
 
-                sendTelegramLog(`Attempting to connect WebSocket to: ${websocketUrl}`);
-                const newWs = new WebSocket(websocketUrl);
+                // If no active connection, establish a new one.
+                if (!wsRef.current) {
+                    const websocketUrl = `wss://${new URL(API_BASE_URL).host}/ws/${user.userId}`;
+                    sendTelegramLog(`Blackjack useEffect: Attempting to establish NEW WebSocket to: ${websocketUrl}`);
+                    const newWs = new WebSocket(websocketUrl);
 
-                newWs.onopen = () => {
-                    sendTelegramLog("WebSocket connected for Blackjack.");
-                    setGameMessage("Підключено. Шукаємо кімнату...");
-                    // Immediately request state upon connection to get current room status
-                    sendWsMessage("request_state"); 
-                };
+                    newWs.onopen = () => {
+                        sendTelegramLog("Blackjack WS: Connected.");
+                        setGameMessage("Підключено. Шукаємо кімнату...");
+                        sendWsMessage("request_state"); // Immediately request state
+                    };
 
-                newWs.onmessage = (event) => {
-                    const message = JSON.parse(event.data);
-                    sendTelegramLog(`WS Received: ${JSON.stringify(message).substring(0, 100)}`);
+                    newWs.onmessage = (event) => {
+                        try {
+                            const message = JSON.parse(event.data);
+                            sendTelegramLog(`Blackjack WS: Received: ${JSON.stringify(message).substring(0, 100)}`);
 
-                    if (message.type === "error") {
-                        showCustomModal(message.message, "Помилка Гри");
-                        setGameMessage(message.message);
-                    } else if (message.type === "game_message") {
-                        setGameMessage(message.message);
-                    } else if (message.type === "level_up") {
-                        playLevelUpSound();
-                        showCustomModal(`🎉 Ви досягли Рівня ${message.level}! 🎉`, "Підвищення Рівня!");
-                    } else if (message.room_id) { // It's a room state update
-                        setRoomState(prevState => {
-                            // Only update timer if it's counting down from a larger number
-                            const newTimer = message.status === "starting_timer" ? (prevState.timer > message.timer ? prevState.timer : message.timer) : 0;
-                            return { ...message, timer: newTimer };
-                        });
-                        setGameMessage(getGameStatusMessage(message, user.userId));
-                        fetchUserData(); // Update balance etc. from user context
-                    } else if (message.type === "round_result") {
-                        const { message: resultMsg, winnings, balance, xp, level, next_level_xp, final_player_score, final_dealer_score } = message;
-                        setGameMessage(resultMsg);
-                        showCustomModal(
-                            `Результат: ${resultMsg}<br/>Ваш рахунок: ${final_player_score}<br/>Рахунок дилера: ${final_dealer_score}<br/>Виграш: ${winnings} фантиків!`,
-                            "Результат Раунду"
-                        );
-                        if (winnings > 0) {
-                            playWinSoundEffect();
-                        } else {
-                            playLoseSoundEffect();
+                            if (message.type === "error") {
+                                showCustomModal(message.message, "Помилка Гри");
+                                setGameMessage(message.message);
+                            } else if (message.type === "game_message") {
+                                setGameMessage(message.message);
+                            } else if (message.type === "level_up") {
+                                playLevelUpSound();
+                                showCustomModal(`🎉 Ви досягли Рівня ${message.level}! 🎉`, "Підвищення Рівня!");
+                            } else if (message.room_id) { // It's a room state update
+                                setRoomState(prevState => {
+                                    // Update timer only if status is starting_timer and new timer is valid
+                                    const newTimer = message.status === "starting_timer" ? (message.timer || 0) : 0;
+                                    return { ...message, timer: newTimer };
+                                });
+                                setGameMessage(getGameStatusMessage(message, user.userId));
+                                fetchUserData(); // Update balance etc. from user context
+                            } else if (message.type === "round_result") {
+                                const { message: resultMsg, winnings, balance, xp, level, next_level_xp, final_player_score, final_dealer_score } = message;
+                                setGameMessage(resultMsg);
+                                showCustomModal(
+                                    `Результат: ${resultMsg}<br/>Ваш рахунок: ${final_player_score}<br/>Рахунок дилера: ${final_dealer_score}<br/>Виграш: ${winnings} фантиків!`,
+                                    "Результат Раунду"
+                                );
+                                if (winnings > 0) {
+                                    playWinSoundEffect();
+                                } else {
+                                    playLoseSoundEffect();
+                                }
+                                fetchUserData(); // Update user context after game result
+                            }
+                        } catch (e) {
+                            sendTelegramLog(`Blackjack WS: Error parsing message or in onmessage handler: ${e.message}`, 'JS_ERROR');
+                            console.error("Blackjack WS onmessage error:", e);
                         }
-                        // Update user context after game result
-                        fetchUserData();
-                    }
-                };
+                    };
 
-                newWs.onclose = (event) => {
-                    sendTelegramLog(`WebSocket disconnected: Code ${event.code}, Reason: ${event.reason}.`, 'JS_WARN');
-                    setGameMessage("Відключено від гри. Спробуйте оновити.");
-                    setRoomState(prev => ({ ...prev, status: "disconnected" }));
-                    setWs(null);
-                };
+                    newWs.onclose = (event) => {
+                        sendTelegramLog(`Blackjack WS: Disconnected. Code: ${event.code}, Reason: ${event.reason}.`, 'JS_WARN');
+                        setGameMessage("Відключено від гри. Спробуйте оновити.");
+                        setRoomState(prev => ({ ...prev, status: "disconnected", room_id: null })); // Reset room state
+                        wsRef.current = null; // Clear the ref on close
+                    };
 
-                newWs.onerror = (error) => {
-                    sendTelegramLog(`WebSocket error: ${error.message}`, 'JS_ERROR');
-                    setGameMessage(`Помилка підключення: ${error.message}`);
-                    setRoomState(prev => ({ ...prev, status: "error" }));
-                };
+                    newWs.onerror = (error) => {
+                        sendTelegramLog(`Blackjack WS: Error: ${error.message}`, 'JS_ERROR');
+                        setGameMessage(`Помилка підключення: ${error.message}`);
+                        setRoomState(prev => ({ ...prev, status: "error", room_id: null })); // Reset room state
+                        wsRef.current = null; // Clear the ref on error
+                    };
 
-                setWs(newWs);
+                    wsRef.current = newWs; // Store the new WebSocket instance in the ref
+                    setWs(newWs); // Also set state for re-renders if needed (though ref is primary)
+                }
 
                 // Clean up on component unmount
                 return () => {
-                    if (newWs.readyState === WebSocket.OPEN) {
-                        newWs.close();
+                    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                        sendTelegramLog('Blackjack useEffect cleanup: Closing WebSocket connection.');
+                        wsRef.current.close(1000, "Component unmounted.");
                     }
+                    wsRef.current = null; // Ensure ref is cleared
                 };
-            }, [user.userId, API_BASE_URL, sendWsMessage, sendTelegramLog, fetchUserData]);
-
+            }, [user.userId, API_BASE_URL, sendTelegramLog, fetchUserData]); // Dependencies for useEffect
 
             // Timer countdown effect
             useEffect(() => {
@@ -1075,9 +1112,9 @@
                         fetchUserData();
                         sendTelegramLog(`Daily Bonus claimed: ${data.amount}`);
                     } else {
-                        showCustomModal(`❌ Помилка: ${data.detail || 'Невідома помилка.'}`, "Помилка Винагороди");
+                        showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка.'}`, "Помилка Винагороди");
                         fetchUserData(); // Fetch updated data to refresh cooldown
-                        sendTelegramLog(`Daily Bonus API failed: ${data.detail || 'Unknown'}`, 'JS_ERROR');
+                        sendTelegramLog(`Daily Bonus API failed: ${data.error || 'Unknown'}`, 'JS_ERROR');
                     }
                 } catch (error) {
                     console.error('Помилка при отриманні щоденної винагороди:', error);
@@ -1151,9 +1188,9 @@
                         fetchUserData();
                         sendTelegramLog(`Quick Bonus claimed: ${data.amount}`);
                     } else {
-                        showCustomModal(`❌ Помилка: ${data.detail || 'Невідома помилка.'}`, "Помилка Бонусу");
+                        showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка.'}`, "Помилка Бонусу");
                         fetchUserData(); // Fetch updated data to refresh cooldown
-                        sendTelegramLog(`Quick Bonus API failed: ${data.detail || 'Unknown'}`, 'JS_ERROR');
+                        sendTelegramLog(`Quick Bonus API failed: ${data.error || 'Unknown'}`, 'JS_ERROR');
                     }
                 } catch (error) {
                     console.error('Помилка при отриманні швидкого бонусу:', error);
@@ -1298,7 +1335,7 @@
                             onClick={() => setCurrentPage('blackjack')} 
                             className={`nav-button p-2 rounded-full text-2xl transition-all duration-200 ${currentPage === 'blackjack' ? 'bg-yellow-500 text-gray-900 scale-110 shadow-lg' : 'text-gray-700 hover:text-gray-800'}`}
                         >
-                            ♠️ 
+                            ♠️ {/* Using a spade icon for Blackjack */}
                         </button>
                         <button
                             onClick={() => setCurrentPage('leaderboard')}
