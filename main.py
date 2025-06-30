@@ -15,6 +15,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.client.default import DefaultBotProperties
+from aiogram.filters import Command # НОВИЙ ІМПОРТ: Для фільтрації команд
 
 # --- Config and Setup ---
 WEBAPP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webapp")
@@ -41,8 +42,8 @@ if not BOT_TOKEN:
     # For now, we'll proceed, but bot operations will fail.
 
 default_props = DefaultBotProperties(parse_mode=ParseMode.HTML)
-bot = Bot(token=BOT_TOKEN if BOT_TOKEN else "DUMMY_TOKEN", default=default_props) # Use dummy if not set, but bot won't work
-dp = Dispatcher() # ВИПРАВЛЕНО: Більше не передаємо 'bot' сюди напряму
+bot = Bot(token=BOT_TOKEN if BOT_TOKEN else "DUMMY_TOKEN", default=default_props) 
+dp = Dispatcher() 
 
 # Mock database (in a real application, use a proper database like PostgreSQL, MongoDB, or Firestore)
 # Using a simple dictionary for demonstration purposes. This will reset on server restart.
@@ -55,7 +56,7 @@ LEVEL_XP_REQUIREMENTS = {
 MAX_LEVEL = max(LEVEL_XP_REQUIREMENTS.keys())
 
 # --- Telegram Bot Handlers ---
-@dp.message(commands=['start'])
+@dp.message(Command("start")) # ВИПРАВЛЕНО: Використання Command фільтра
 async def start_command_handler(message: types.Message):
     # Get user_id and username
     user_id = str(message.from_user.id)
