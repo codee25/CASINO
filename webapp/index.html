@@ -6,25 +6,21 @@
     <title>Імперія Слота: Віртуальне Казино</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="./style.css">
-    <!-- Third-party libraries that need to be globally available -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.9.1/gsap.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body class="flex flex-col items-center justify-between w-screen h-screen bg-gradient-to-br from-purple-900 via-gray-900 to-indigo-900 text-white overflow-hidden">
     <div id="root" class="relative w-full h-full flex flex-col items-center justify-start">
-        <!-- React App will be mounted here -->
         <p id="initialLoadingMessage" class="text-xl text-white mt-10">
             Завантаження гри... Будь ласка, зачекайте.
         </p>
     </div>
     
-    <!-- React and ReactDOM scripts -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 
-    <!-- Your entire React App - processed by Babel in the browser -->
     <script type="text/babel" data-presets="react">
         // Log at the very beginning of this script
         if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
@@ -178,7 +174,7 @@
                             };
                             if (prevUser.level !== 1 && newUserState.level > prevUser.level) {
                                 playLevelUpSound();
-                                showCustomModal(`🎉 Ви досягли Рівня ${newUserState.level}! �`, "Підвищення Рівня!");
+                                showCustomModal(`🎉 Ви досягли Рівня ${newUserState.level}! 🎉`, "Підвищення Рівня!");
                             }
                             return newUserState;
                         });
@@ -532,27 +528,30 @@
                 if (window.Telegram && window.Telegram.WebApp) {
                     Telegram.WebApp.sendData(`JS_LOG: Showing modal: ${title} - ${msg.substring(0, Math.min(msg.length, 50))}`);
                 }
-            }
-        }
-        // Add event listeners for modal close buttons outside React for simplicity
-        document.addEventListener('DOMContentLoaded', () => {
-            const customModal = document.getElementById('customModal');
-            if (customModal) {
-                const closeButton = customModal.querySelector('.close-button');
-                const okButton = customModal.querySelector('.modal-content button');
-                
+
+                // Re-attach event listeners every time the modal is shown
+                // This resolves the issue where buttons become unresponsive after first use
+                const closeButton = modalElement.querySelector('.close-button');
+                const okButton = modalElement.querySelector('.modal-content button'); // Selects the first button, which is the OK button
+
                 const closeModal = () => {
-                    customModal.classList.remove('active');
-                    customModal.classList.add('hidden'); // Hide it
+                    modalElement.classList.remove('active');
+                    modalElement.classList.add('hidden'); // Hide it
                 };
 
                 if (closeButton) {
-                    closeButton.addEventListener('click', closeModal);
+                    closeButton.onclick = null; // Clear previous handler to prevent duplicates
+                    closeButton.onclick = closeModal; // Set new handler
                 }
                 if (okButton) {
-                    okButton.addEventListener('click', closeModal);
+                    okButton.onclick = null; // Clear previous handler
+                    okButton.onclick = closeModal; // Set new handler
                 }
             }
+        }
+        // Removed the problematic DOMContentLoaded listener part for customModal buttons here.
+        // The only DOMContentLoaded listener now is for audio prompt.
+        document.addEventListener('DOMContentLoaded', () => {
             const audioPrompt = document.getElementById('audioPrompt');
             if (audioPrompt) {
                 const activateAudioButton = document.getElementById('activateAudioButton');
@@ -1135,6 +1134,31 @@
                                 Підключитись до гри
                             </button>
                         )}
+                        {/* NEW: Leave Room button for when player is in a room */}
+                        {blackjackRoomState.room_id && blackjackRoomState.status !== "disconnected" && (
+                            <button
+                                onClick={() => {
+                                    sendWsMessage("leave_room", { room_id: blackjackRoomState.room_id });
+                                    setBlackjackRoomState(prev => ({
+                                        ...prev,
+                                        room_id: null,
+                                        status: "disconnected", // Set to disconnected after leaving
+                                        dealer_hand: [],
+                                        dealer_score: 0,
+                                        players: [],
+                                        current_player_turn: null,
+                                        player_count: 0,
+                                        min_players: 0,
+                                        max_players: 0,
+                                        timer: 0
+                                    }));
+                                    setBlackjackGameMessage("Ви покинули кімнату.");
+                                }}
+                                className="spin-button bg-gray-500 hover:bg-gray-600 text-white py-3 px-6 rounded-full text-lg shadow-xl transition-all duration-300 transform hover:scale-105 active:scale-95 w-full uppercase mt-3 md:mt-0"
+                            >
+                                Залишити кімнату
+                            </button>
+                        )}
                     </div>
 
                     {/* Bet Input Modal - if we wanted variable bets */}
@@ -1173,7 +1197,7 @@
         const GamePlaceholder = ({ gameName, icon }) => {
             const { sendTelegramLog } = useUser();
             useEffect(() => {
-                sendTelegramLog(`Navigated to placeholder game: ${gameName}`);
+                sendTelegramLog(`Mapsd to placeholder game: ${gameName}`);
             }, [gameName, sendTelegramLog]);
 
             return (
@@ -1526,8 +1550,10 @@
                     {/* Custom Modal for Alerts */}
                     <div id="customModal" className="modal fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-70 hidden">
                         <div className="modal-content bg-gray-800 rounded-xl shadow-2xl p-6 md:p-8 text-center w-11/12 max-w-sm relative border-2 border-yellow-400">
-                            <button className="close-button absolute top-2 right-4 text-gray-400 hover:text-white text-3xl font-bold transition-colors duration-200" onClick={() => setShowBetModal(false)}>&times;</button>
+                            {/* Close button that is part of the modal content, hence its event listener is now managed in showCustomModal */}
+                            <button className="close-button absolute top-2 right-4 text-gray-400 hover:text-white text-3xl font-bold transition-colors duration-200">&times;</button>
                             <p id="modalMessage" className="text-xl md:text-2xl font-semibold mb-4"></p>
+                            {/* OK button that is part of the modal content */}
                             <button className="bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold py-2 px-6 rounded-full text-lg shadow-md transition-all duration-300">OK</button>
                         </div>
                     </div>
