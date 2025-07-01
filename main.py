@@ -1,3 +1,5 @@
+# main.py - Серверний код FastAPI для Віртуального Казино
+
 import logging
 import os
 import json
@@ -88,7 +90,7 @@ else:
 dp = Dispatcher()
 
 # --- Конфігурація гри ---
-SYMBOLS = ['🍒', '�', '🍊', '🍇', '🔔', '💎', '🍀']
+SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '�'] # Символ "" був виправлений на "🍋"
 WILD_SYMBOL = '⭐'
 SCATTER_SYMBOL = '💰'
 ALL_REEL_SYMBOLS = SYMBOLS + [WILD_SYMBOL, SCATTER_SYMBOL]
@@ -158,13 +160,13 @@ def get_db_connection():
             keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5
         )
         logger.info("Successfully connected to PostgreSQL database.")
-        return conn
     except psycopg2.Error as err:
         logger.error(f"DB connection error: {err}", exc_info=True)
         raise
     except Exception as e:
         logger.error(f"Unexpected error during DB connection: {e}", exc_info=True)
         raise
+    return conn # Повертаємо conn, навіть якщо виникла помилка, щоб finally міг його закрити
 
 def init_db():
     conn = None
@@ -251,6 +253,7 @@ def get_user_data(user_id: int | str) -> dict:
             }
     except Exception as e:
         logger.error(f"Error getting user data from PostgreSQL for {user_id_int}: {e}", exc_info=True)
+        # Повертаємо дефолтні значення у випадку помилки, щоб фронтенд не зависав
         return {
             'username': 'Error Player', 'balance': 0, 'xp': 0, 'level': 1, 
             'last_free_coins_claim': None, 'last_daily_bonus_claim': None, 'last_quick_bonus_claim': None
@@ -266,12 +269,14 @@ def update_user_data(user_id: int | str, **kwargs):
         conn = get_db_connection()
         cursor = conn.cursor()
 
+        # Отримуємо поточні дані, щоб зберегти ті поля, які не оновлюються
         current_data_from_db = get_user_data(user_id_int) 
         logger.info(f"Before update for {user_id_int}: {current_data_from_db.get('balance', 'N/A')} balance, {current_data_from_db.get('xp', 'N/A')} xp, {current_data_from_db.get('level', 'N/A')} level.")
 
         update_fields_parts = []
         update_values = []
 
+        # Формуємо словник з полями для оновлення, використовуючи kwargs або поточні дані
         fields_to_update = {
             'username': kwargs.get('username', current_data_from_db.get('username', 'Unnamed Player')),
             'balance': kwargs.get('balance', current_data_from_db.get('balance', 0)),
@@ -282,6 +287,7 @@ def update_user_data(user_id: int | str, **kwargs):
             'last_quick_bonus_claim': kwargs.get('last_quick_bonus_claim', current_data_from_db.get('last_quick_bonus_claim'))
         }
         
+        # Переконатися, що всі дати мають timezone info
         for key in ['last_free_coins_claim', 'last_daily_bonus_claim', 'last_quick_bonus_claim']:
             if fields_to_update[key] and fields_to_update[key].tzinfo is None:
                 fields_to_update[key] = fields_to_update[key].replace(tzinfo=timezone.utc)
@@ -379,6 +385,10 @@ def spin_slot_logic(user_id: int | str) -> Dict:
     new_xp = current_xp + xp_gained
     new_level = get_level_from_xp(new_xp)
 
+    # Вирівнювання XP, якщо перевищує поріг для поточного рівня, але не досягає наступного
+    if new_level == current_level and new_xp >= get_xp_for_next_level(current_level):
+        new_xp = get_xp_for_next_level(current_level) - 1 # Залишаємо XP трохи менше порогу, щоб рівень не підвищувався раніше часу
+
     level_up_message = ""
     if new_level > current_level:
         level_up_message = f" 🎉 НОВИЙ РІВЕНЬ: {new_level}! 🎉"
@@ -425,6 +435,10 @@ def coin_flip_game_logic(user_id: int | str, choice: str) -> Dict:
     
     new_xp = current_xp + xp_gained
     new_level = get_level_from_xp(new_xp)
+
+    # Вирівнювання XP
+    if new_level == current_level and new_xp >= get_xp_for_next_level(current_level):
+        new_xp = get_xp_for_next_level(current_level) - 1
 
     level_up_message = ""
     if new_level > current_level:
@@ -830,6 +844,8 @@ class BlackjackRoom:
         self.round_in_progress = False 
         self.ping_task: Optional[asyncio.Task] = None 
 
+        logger.info(f"BlackjackRoom {self.room_id} created.")
+
     async def _start_game_after_delay(self, room_id: str, delay: int):
         """Внутрішня функція для запуску таймера гри (від очікування до ставок)."""
         room = blackjack_room_manager.rooms.get(room_id)
@@ -877,8 +893,9 @@ class BlackjackRoom:
         await room.send_room_state_to_all()
 
         for i in range(delay, 0, -1):
-            if room.status != "betting": # Якщо статус змінився (наприклад, всі вже поставили)
-                logger.info(f"Room {room_id}: Betting timer cancelled, status changed to {room.status}.")
+            # Якщо всі гравці вже зробили ставки, або статус змінився, скасовуємо таймер
+            if room.status != "betting" or all(p.has_bet for p in room.players.values()):
+                logger.info(f"Room {room_id}: Betting timer cancelled, status changed to {room.status} or all players bet.")
                 room.timer_countdown = 0
                 return
             room.timer_countdown = i
@@ -932,6 +949,8 @@ class BlackjackRoom:
         if user_id in self.players:
             # Якщо гравець вже в кімнаті, оновлюємо його WebSocket
             self.players[user_id].websocket = websocket
+            # Якщо гравець був позначений як "не грає" в попередньому раунді, повертаємо його в активний стан
+            self.players[user_id].is_playing = True
             logger.info(f"Player {user_id} reconnected to room {self.room_id}")
             await self.send_room_state_to_all()
             return True, "Ви успішно перепідключились до кімнати."
@@ -952,7 +971,7 @@ class BlackjackRoom:
             logger.info(f"Room {self.room_id}: Game start timer initiated for {self.timer_countdown} seconds.")
             await self.send_room_state_to_all() # Оновити стан з таймером
         
-        # Запускаємо ping-pong для підтримки з'єднання
+        # Запускаємо ping-pong для підтримки з'єднання, якщо ще не запущено
         if not self.ping_task or (self.ping_task and self.ping_task.done()):
             self.ping_task = asyncio.create_task(self._ping_players())
             logger.info(f"Room {self.room_id}: Ping task started.")
@@ -961,8 +980,13 @@ class BlackjackRoom:
 
     async def remove_player(self, user_id: int):
         if user_id in self.players:
+            username = self.players[user_id].username
             del self.players[user_id]
-            logger.info(f"Player {user_id} removed from room {self.room_id}")
+            # Видаляємо з мапінгу player_to_room
+            if user_id in blackjack_room_manager.player_to_room:
+                del blackjack_room_manager.player_to_room[user_id]
+
+            logger.info(f"Player {username} ({user_id}) removed from room {self.room_id}")
             
             if not self.players:
                 # Якщо кімната порожня, скасувати всі таймери і видалити кімнату
@@ -977,8 +1001,6 @@ class BlackjackRoom:
                     logger.info(f"Room {self.room_id}: Ping task cancelled.")
                 if self.room_id in blackjack_room_manager.rooms:
                     del blackjack_room_manager.rooms[self.room_id]
-                if user_id in blackjack_room_manager.player_to_room:
-                    del blackjack_room_manager.player_to_room[user_id]
                 logger.info(f"Room {self.room_id} is empty and removed.")
             else:
                 # Якщо гравець, що вийшов, був поточним гравцем або гравець був останнім активним
@@ -986,16 +1008,16 @@ class BlackjackRoom:
                     active_players_after_removal = [p for p in self.players.values() if p.is_playing]
                     if not active_players_after_removal: # Всі активні гравці вийшли
                         logger.info(f"Room {self.room_id}: All active players left, ending round.")
-                        await self.end_round()
-                    elif self.get_current_player() is None: # Якщо поточний гравець вийшов
+                        await self.end_round() # Завершити раунд, якщо немає активних гравців
+                    elif self.get_current_player() is None or self.get_current_player().user_id == user_id: # Якщо поточний гравець вийшов
                         logger.info(f"Room {self.room_id}: Current player {user_id} left, moving to next turn.")
-                        await self.next_turn()
+                        await self.next_turn() # Передати хід наступному
                 elif self.status == "betting":
                     # Якщо гравець вийшов під час ставок, перевірити, чи можна почати раунд
                     logger.info(f"Room {self.room_id}: Player {user_id} left during betting. Re-checking round start conditions.")
                     self._check_and_start_round_if_ready() # Перевірити, чи всі інші вже поставили
                 
-                await self.send_room_state_to_all()
+                await self.send_room_state_to_all() # Оновити стан для решти гравців
         else:
             logger.warning(f"Player {user_id} not found in room {self.room_id} for removal.")
 
@@ -1031,7 +1053,7 @@ class BlackjackRoom:
                 player_state["dealer_hand"] = []
                 player_state["dealer_score"] = 0
                 await player.websocket.send_json(player_state)
-                logger.info(f"Sent room state to player {player.user_id} in room {self.room_id}. State: {player_state['status']}") # ДОДАНО ЛОГ
+                logger.info(f"Sent room state to player {player.user_id} in room {self.room_id}. State: {player_state['status']}, Timer: {player_state['timer']}") # ДОДАНО ЛОГ
             except WebSocketDisconnect:
                 logger.warning(f"Player {player.user_id} in room {self.room_id} disconnected during state send. Removing.")
                 if player.user_id in self.players:
@@ -1060,7 +1082,9 @@ class BlackjackRoom:
             active_players = [p for p in self.players.values() if p.is_playing]
             if active_players:
                 active_players.sort(key=lambda p: p.user_id) # Сортуємо для стабільного порядку ходу
-                self.current_turn_index = self.current_turn_index % len(active_players) # Забезпечуємо дійсний індекс
+                # Забезпечуємо дійсний індекс, якщо гравці виходять
+                if self.current_turn_index >= len(active_players):
+                    self.current_turn_index = 0 
                 current_player_id = active_players[self.current_turn_index].user_id
         
         return {
@@ -1148,7 +1172,6 @@ class BlackjackRoom:
 
         self._check_and_start_round_if_ready()
 
-
     def _check_and_start_round_if_ready(self):
         """Перевіряє, чи всі гравці завершили фазу ставок, і запускає раунд."""
         # Всі гравці, які були в кімнаті на початку фази ставок, повинні або зробити ставку,
@@ -1162,7 +1185,10 @@ class BlackjackRoom:
         player_bet_statuses = {p.user_id: {'has_bet': p.has_bet, 'is_playing': p.is_playing} for p in self.players.values()}
         logger.info(f"_check_and_start_round_if_ready: Room {self.room_id}. Player statuses: {player_bet_statuses}. All finished betting: {all_players_finished_betting}. Current players in room: {len(self.players)}. Min players: {self.min_players}. Round in progress: {self.round_in_progress}")
 
-        if all_players_finished_betting and len(self.players) >= self.min_players:
+        # Перевіряємо, чи є достатньо гравців, які зробили ставку і грають
+        players_who_bet_and_play = [p for p in self.players.values() if p.has_bet and p.is_playing]
+
+        if all_players_finished_betting and len(players_who_bet_and_play) >= 1: # Змінено на 1, щоб гра могла початися навіть з 1 гравцем
             if not self.round_in_progress: # Запобігаємо повторному запуску
                 self.round_in_progress = True
                 self.status = "playing" # Змінюємо статус на "playing"
@@ -1174,7 +1200,12 @@ class BlackjackRoom:
             else:
                 logger.info(f"Room {self.room_id}: All players finished betting, but round already in progress. Skipping start_round.")
         else:
-            logger.info(f"Room {self.room_id}: Not all players finished betting or not enough players. Conditions for starting round not met.")
+            logger.info(f"Room {self.room_id}: Not all players finished betting or not enough players who bet. Conditions for starting round not met.")
+            # Якщо таймер ставок вже закінчився, і гравців, що зробили ставку, менше 1, скасувати раунд
+            if self.betting_timer and self.betting_timer.done() and len(players_who_bet_and_play) < 1:
+                logger.info(f"Room {self.room_id}: Betting timer finished and not enough players who bet. Cancelling round.")
+                asyncio.create_task(self.cancel_round("Недостатньо гравців, які зробили ставку. Раунд скасовано."))
+                
 
 
     async def handle_action(self, user_id: int, action: str):
@@ -1194,13 +1225,13 @@ class BlackjackRoom:
         
         current_player = self.get_current_player()
         if not current_player or player.user_id != current_player.user_id:
-             logger.warning(f"handle_action: Player {user_id} tried to act but it's not their turn (current: {current_player.user_id if current_player else 'None'}).")
-             try:
-                 await player.websocket.send_json({"type": "error", "message": "Зараз хід іншого гравця."})
-             except WebSocketDisconnect:
-                 logger.warning(f"Player {user_id} disconnected during error send (handle_action - not their turn).")
-                 await self.remove_player(user_id)
-             return
+            logger.warning(f"handle_action: Player {user_id} tried to act but it's not their turn (current: {current_player.user_id if current_player else 'None'}).")
+            try:
+                await player.websocket.send_json({"type": "error", "message": "Зараз хід іншого гравця."})
+            except WebSocketDisconnect:
+                logger.warning(f"Player {user_id} disconnected during error send (handle_action - not their turn).")
+                await self.remove_player(user_id)
+            return
 
         if action == "hit":
             player.hand.add_card(self.deck.deal_card())
@@ -1258,7 +1289,9 @@ class BlackjackRoom:
             return None
         active_players.sort(key=lambda p: p.user_id) # Сортуємо для стабільного порядку ходу
         # Забезпечуємо, що current_turn_index не виходить за межі списку активних гравців
-        self.current_turn_index = self.current_turn_index % len(active_players)
+        # Якщо індекс виходить за межі, скидаємо його на 0 (початок списку)
+        if self.current_turn_index >= len(active_players):
+            self.current_turn_index = 0
         return active_players[self.current_turn_index]
 
     async def next_turn(self):
@@ -1267,23 +1300,37 @@ class BlackjackRoom:
             self.action_timer.cancel()
             self.action_timer = None
             self.timer_countdown = 0 # Скинути таймер на фронтенді
-            await self.send_room_state_to_all() # Відправити оновлення, щоб прибрати таймер
-
-        self.current_turn_index += 1
+        
         active_players = [p for p in self.players.values() if p.is_playing]
         
         if not active_players:
             # Всі гравці завершили хід (перебрали або зупинились)
             logger.info(f"Room {self.room_id}: All players finished their turns. Ending round.")
             await self.end_round()
+            return
+
+        # Знайти поточний індекс гравця
+        current_player_id = self.get_current_player().user_id if self.get_current_player() else None
+        if current_player_id:
+            try:
+                self.current_turn_index = active_players.index(self.players[current_player_id]) + 1
+            except ValueError: # Якщо поточного гравця вже немає в активних (наприклад, відключився)
+                self.current_turn_index = 0 # Почати з першого активного
         else:
-            # Передаємо хід наступному активному гравцю
-            logger.info(f"Room {self.room_id}: Moving to next player's turn. Current turn index: {self.current_turn_index}, total active: {len(active_players)}")
+            self.current_turn_index = 0 # Почати з першого активного, якщо не було поточного
+
+        # Передаємо хід наступному активному гравцю
+        next_player = self.get_current_player()
+        
+        if next_player:
+            logger.info(f"Room {self.room_id}: Moving to next player's turn: {next_player.user_id}. Current turn index: {self.current_turn_index}, total active: {len(active_players)}")
             await self.send_room_state_to_all() # Оновити стан для нового поточного гравця
             # Запускаємо таймер ходу для нового гравця
-            current_player = self.get_current_player()
-            if current_player: # Перевірка на None, хоча за логікою тут завжди має бути гравець
-                self.action_timer = asyncio.create_task(self._start_action_timer(self.room_id, 20, current_player.user_id))
+            self.action_timer = asyncio.create_task(self._start_action_timer(self.room_id, 20, next_player.user_id))
+        else:
+            # Це означає, що active_players порожній, що має бути оброблено вище
+            logger.warning(f"Room {self.room_id}: next_turn called but no next player found. Calling end_round.")
+            await self.end_round()
 
 
     async def start_round(self):
@@ -1367,7 +1414,8 @@ class BlackjackRoom:
                         "level": get_user_data(player.user_id)["level"],
                         "next_level_xp": get_xp_for_next_level(get_user_data(player.user_id)["level"]),
                         "final_player_score": 0, # Немає рахунку, бо не грав
-                        "final_player_hand": [] # Немає руки, бо не грав
+                        "final_player_hand": [], # Немає руки, бо не грав
+                        "final_dealer_score": 0 # Дилера немає
                     })
                 except WebSocketDisconnect:
                     logger.warning(f"Player {player.user_id} disconnected during round_result send (no participation).")
@@ -1382,30 +1430,36 @@ class BlackjackRoom:
             logger.info(f"Room {self.room_id}: All active players busted. No winners.")
             for player_data in player_results: # Обробляємо тих, хто брав участь
                 player = self.players.get(player_data["user_id"])
-                if player:
-                    user_data = get_user_data(player.user_id)
-                    new_balance = user_data["balance"] # Гроші вже списані, повертати нічого
-                    new_xp = user_data["xp"] + 1 # XP за участь
-                    new_level = get_level_from_xp(new_xp)
-                    update_user_data(player.user_id, balance=new_balance, xp=new_xp, level=new_level)
-                    updated_user_data_for_response = get_user_data(player.user_id) # Отримати оновлені дані
-                    try:
-                        await player.websocket.send_json({
-                            "type": "round_result",
-                            "message": "Всі перебрали! Ніхто не виграв.",
-                            "winnings": 0,
-                            "balance": updated_user_data_for_response["balance"],
-                            "xp": updated_user_data_for_response["xp"],
-                            "level": updated_user_data_for_response["level"],
-                            "next_level_xp": get_xp_for_next_level(updated_user_data_for_response["level"]),
-                            "final_player_score": player.hand.value,
-                            "final_player_hand": player.hand.to_json(), # Додаємо руку гравця
-                            "final_dealer_score": 0 # Дилера немає
-                        })
-                    except WebSocketDisconnect:
-                        logger.warning(f"Player {player.user_id} disconnected during round_result send (all busted).")
-                        await self.remove_player(player.user_id)
-                    if player: player.reset_for_round() # Скидаємо стан для наступного раунду
+                if not player: continue # Можливо, гравець вже відключився
+
+                user_data = get_user_data(player.user_id)
+                new_balance = user_data["balance"] # Гроші вже списані, повертати нічого
+                new_xp = user_data["xp"] + 1 # XP за участь
+                new_level = get_level_from_xp(new_xp)
+                
+                # Вирівнювання XP
+                if new_level == user_data["level"] and new_xp >= get_xp_for_next_level(user_data["level"]):
+                    new_xp = get_xp_for_next_level(user_data["level"]) - 1
+
+                update_user_data(player.user_id, balance=new_balance, xp=new_xp, level=new_level)
+                updated_user_data_for_response = get_user_data(player.user_id) # Отримати оновлені дані
+                try:
+                    await player.websocket.send_json({
+                        "type": "round_result",
+                        "message": "Всі перебрали! Ніхто не виграв.",
+                        "winnings": 0,
+                        "balance": updated_user_data_for_response["balance"],
+                        "xp": updated_user_data_for_response["xp"],
+                        "level": updated_user_data_for_response["level"],
+                        "next_level_xp": get_xp_for_next_level(updated_user_data_for_response["level"]),
+                        "final_player_score": player.hand.value,
+                        "final_player_hand": player.hand.to_json(), # Додаємо руку гравця
+                        "final_dealer_score": 0 # Дилера немає
+                    })
+                except WebSocketDisconnect:
+                    logger.warning(f"Player {player.user_id} disconnected during round_result send (all busted).")
+                    await self.remove_player(player.user_id)
+                if player: player.reset_for_round() # Скидаємо стан для наступного раунду
         else:
             # Знаходимо максимальний рахунок серед тих, хто не перебрав
             max_score = max(p["score"] for p in valid_players)
@@ -1436,6 +1490,10 @@ class BlackjackRoom:
                 new_xp = user_data["xp"] + xp_gain
                 new_level = get_level_from_xp(new_xp)
                 
+                # Вирівнювання XP
+                if new_level == user_data["level"] and new_xp >= get_xp_for_next_level(user_data["level"]):
+                    new_xp = get_xp_for_next_level(user_data["level"]) - 1
+
                 update_user_data(player.user_id, balance=new_balance, xp=new_xp, level=new_level)
                 updated_user_data_for_response = get_user_data(player.user_id) # Отримати оновлені дані
 
@@ -1474,11 +1532,12 @@ class BlackjackRoom:
         # Після невеликої паузи переходимо до фази ставок, якщо є достатньо гравців
         await asyncio.sleep(3) 
         if len(self.players) >= self.min_players:
-            self.status = "betting"
-            await self.send_room_state_to_all()
-            logger.info(f"Room {self.room_id}: Transitioned to betting phase.")
-            # Запускаємо таймер для фази ставок
-            self.betting_timer = asyncio.create_task(self._start_betting_timer(self.room_id, 20)) # 20 секунд на ставки
+            self.status = "starting_timer" # Перехід до стартового таймера перед ставками
+            if self.game_start_timer and not self.game_start_timer.done():
+                self.game_start_timer.cancel()
+            self.timer_countdown = 20 # Таймер на 20 секунд
+            self.game_start_timer = asyncio.create_task(self._start_game_after_delay(self.room_id, self.timer_countdown))
+            logger.info(f"Room {self.room_id}: Transitioned to starting_timer phase after round end.")
         else:
             logger.info(f"Room {self.room_id}: Not enough players for new round, staying in waiting.")
 
@@ -1605,8 +1664,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         room = blackjack_room_manager.rooms.get(room_id)
         if room:
             await room.remove_player(user_id_int)
-            if user_id_int in blackjack_room_manager.player_to_room:
-                del blackjack_room_manager.player_to_room[user_id_int]
         else:
             logger.warning(f"Room {room_id} not found on disconnect for player {user_id_int}.")
     except Exception as e:
@@ -1683,3 +1740,8 @@ async def on_shutdown():
     await dp.storage.close() 
     await bot.session.close() 
     logger.info("Bot session closed.")
+
+# Запуск сервера (зазвичай через `uvicorn main:app --reload`)
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

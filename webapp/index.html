@@ -337,6 +337,15 @@
                 return () => {
                     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                         sendTelegramLog('UserProvider cleanup: Closing WebSocket connection.');
+                        // Explicitly send a leave_room message before closing
+                        if (user.userId && blackjackRoomState.room_id) {
+                            try {
+                                wsRef.current.send(JSON.stringify({ action: 'leave_room', user_id: user.userId, room_id: blackjackRoomState.room_id }));
+                                sendTelegramLog(`UserProvider cleanup: Sent leave_room for user ${user.userId} from room ${blackjackRoomState.room_id}.`);
+                            } catch (e) {
+                                sendTelegramLog(`UserProvider cleanup: Error sending leave_room: ${e.message}`, 'JS_ERROR');
+                            }
+                        }
                         wsRef.current.close(1000, "App unmounted.");
                     }
                     wsRef.current = null;
@@ -345,7 +354,7 @@
                         clearTimeout(sendWsMessageDebounceTimer.current);
                     }
                 };
-            }, [sendTelegramLog]);
+            }, [sendTelegramLog, user.userId, blackjackRoomState.room_id]); // Added blackjackRoomState.room_id to dependencies
 
 
             const getGameStatusMessage = (state, currentUserId) => {
@@ -496,7 +505,7 @@
         // -----------------------------------------------------------------------------
         const SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀'];
         const WILD_SYMBOL = '⭐';
-        const SCATTER_SYMBOL = '💰';
+        const SCATTER_SYMBOL = '�';
         const ALL_REEL_SYMBOLS = [...SYMBOLS, WILD_SYMBOL, SCATTER_SYMBOL];
         const REEL_HEIGHT_PX = 90; // Default height for a symbol in a reel
         const REEL_SPIN_CYCLES = 5;
