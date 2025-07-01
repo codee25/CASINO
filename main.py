@@ -138,7 +138,7 @@ PAYOUTS = {
     ('🍒', '🍒', '🍒'): 1000, ('🍋', '🍋', '🍋'): 800, ('🍊', '🍊', '🍊'): 600,
     ('🍇', '🍇', '🍇'): 400, ('🔔', '🔔', '🔔'): 300, ('💎', '💎', '💎'): 200,
     ('🍀', '🍀', '🍀'): 150, ('⭐', '⭐', '⭐'): 2000, 
-    ('🍒', '🍒'): 100, ('🍋', '🍋'): 80, ('🍊', '🍊'): 60,
+    ('�', '🍒'): 100, ('🍋', '🍋'): 80, ('🍊', '🍊'): 60,
     ('🍇', '🍇'): 40, ('🔔', '🔔'): 30, ('💎', '💎'): 20,
     ('🍀', '🍀'): 10,
     ('💰', '💰'): 200, ('💰', '💰', '💰'): 500,
@@ -837,7 +837,7 @@ class BlackjackRoom:
             logger.warning(f"Attempted to start timer for non-existent room {room_id}.")
             return
         
-        logger.info(f"Room {room_id}: Game start timer countdown started from {delay} seconds.")
+        logger.info(f"Room {room_id}: Game start timer countdown started from {delay} seconds. Status: {room.status}")
         for i in range(delay, 0, -1):
             room.timer_countdown = i
             # Перевіряємо умови виходу з таймера: статус змінився або гравців стало менше
@@ -872,7 +872,7 @@ class BlackjackRoom:
             logger.warning(f"Attempted to start betting timer for non-existent room {room_id}.")
             return
         
-        logger.info(f"Room {room_id}: Betting timer countdown started from {delay} seconds.")
+        logger.info(f"Room {room_id}: Betting timer countdown started from {delay} seconds. Status: {room.status}")
         room.timer_countdown = delay # Встановлюємо таймер для відображення
         await room.send_room_state_to_all()
 
@@ -905,7 +905,7 @@ class BlackjackRoom:
             logger.warning(f"Attempted to start action timer for non-existent room {room_id}.")
             return
         
-        logger.info(f"Room {room_id}: Action timer for player {user_id} started from {delay} seconds.")
+        logger.info(f"Room {room_id}: Action timer for player {user_id} started from {delay} seconds. Status: {room.status}")
         room.timer_countdown = delay
         await room.send_room_state_to_all()
 
@@ -1203,7 +1203,7 @@ class BlackjackRoom:
 
         if action == "hit":
             player.hand.add_card(self.deck.deal_card())
-            logger.info(f"Player {user_id} hits. Hand: {player.hand.to_json()}, Score: {player.hand.value}")
+            logger.info(f"Player {user_id} hits. New hand: {player.hand.to_json()}, Score: {player.hand.value}")
             await self.send_room_state_to_all() # Оновлюємо стан після взяття карти
             
             if player.hand.value > 21:
@@ -1280,19 +1280,23 @@ class BlackjackRoom:
             logger.info(f"Room {self.room_id}: Moving to next player's turn. Current turn index: {self.current_turn_index}, total active: {len(active_players)}")
             await self.send_room_state_to_all() # Оновити стан для нового поточного гравця
             # Запускаємо таймер ходу для нового гравця
-            self.action_timer = asyncio.create_task(self._start_action_timer(self.room_id, 20, self.get_current_player().user_id))
+            current_player = self.get_current_player()
+            if current_player: # Перевірка на None, хоча за логікою тут завжди має бути гравець
+                self.action_timer = asyncio.create_task(self._start_action_timer(self.room_id, 20, current_player.user_id))
 
 
     async def start_round(self):
-        logger.info(f"Room {self.room_id}: Starting new round.")
+        logger.info(f"Room {self.room_id}: Starting new round. Status: {self.status}")
         self.deck = Deck()
         self.current_turn_index = 0 # Скидаємо індекс ходу
 
+        # Скидаємо стан гравців та роздаємо карти тим, хто бере участь
         for player in self.players.values():
             player.reset_for_round() # Скидаємо стан для нового раунду
-            # Якщо гравець не зробив ставку (або не зміг), handle_bet вже встановив is_playing = False.
+            # Важливо: has_bet вже встановлено в handle_bet (або в _start_betting_timer, якщо таймер вийшов)
+            # is_playing також встановлюється в handle_bet, якщо недостатньо коштів.
             # Тут ми роздаємо карти тільки тим, хто залишився is_playing = True.
-            if player.is_playing: 
+            if player.has_bet and player.is_playing: # Тільки якщо гравець зробив ставку і може грати
                 player.hand.add_card(self.deck.deal_card())
                 player.hand.add_card(self.deck.deal_card())
                 logger.info(f"Player {player.user_id} dealt: {player.hand.to_json()}")
