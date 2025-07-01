@@ -47,6 +47,26 @@
         };
 
 
+        // --- AudioContext Resume (for Tone.js warning) ---
+        // Це вирішує попередження "The AudioContext was not allowed to start."
+        // Аудіо може бути відтворено лише після взаємодії користувача зі сторінкою.
+        const resumeAudioContext = () => {
+            if (Tone.context.state !== 'running') {
+                try {
+                    Tone.context.resume().then(() => {
+                        sendTelegramLog('AudioContext resumed successfully.', 'JS_LOG');
+                    }).catch(e => {
+                        sendTelegramLog(`Failed to resume AudioContext: ${e.message}`, 'JS_ERROR');
+                    });
+                } catch (e) {
+                    sendTelegramLog(`Error trying to resume AudioContext: ${e.message}`, 'JS_ERROR');
+                }
+            }
+        };
+        // Додаємо обробник кліку на весь документ, щоб спробувати відновити AudioContext
+        document.body.addEventListener('click', resumeAudioContext, { once: true });
+
+
         // -----------------------------------------------------------------------------
         // Global User Context
         // -----------------------------------------------------------------------------
@@ -69,6 +89,9 @@
 
             // WebSocket state and ref for global management
             const wsRef = useRef(null);
+            const wsReconnectAttempts = useRef(0); // For exponential backoff
+            const wsReconnectTimeout = useRef(null); // For clearing reconnect timeout
+
             const [blackjackRoomState, setBlackjackRoomState] = useState({
                 room_id: null,
                 status: "disconnected", // Default to disconnected
@@ -155,7 +178,7 @@
                             };
                             if (prevUser.level !== 1 && newUserState.level > prevUser.level) {
                                 playLevelUpSound();
-                                showCustomModal(`🎉 Ви досягли Рівня ${newUserState.level}! 🎉`, "Підвищення Рівня!");
+                                showCustomModal(`🎉 Ви досягли Рівня ${newUserState.level}! �`, "Підвищення Рівня!");
                             }
                             return newUserState;
                         });
@@ -246,6 +269,11 @@
                         sendTelegramLog("Blackjack WS: Connected.");
                         setBlackjackGameMessage("Підключено. Шукаємо кімнату...");
                         // IMPORTANT: request_state is now sent by BlackjackGame component on mount
+                        wsReconnectAttempts.current = 0; // Reset reconnect attempts on successful connection
+                        if (wsReconnectTimeout.current) {
+                            clearTimeout(wsReconnectTimeout.current);
+                            wsReconnectTimeout.current = null;
+                        }
                     };
 
                     newWs.onmessage = (event) => {
@@ -314,12 +342,25 @@
                         setBlackjackGameMessage("Відключено від гри. Спробуйте оновити.");
                         setBlackjackRoomState(prev => ({ ...prev, status: "disconnected", room_id: null, timer: 0 })); // Reset timer on disconnect
                         wsRef.current = null;
+                        // Attempt to reconnect after a delay
+                        const delay = Math.min(1000 * (wsReconnectAttempts.current + 1), 5000); // Exponential backoff up to 5 seconds
+                        if (wsReconnectAttempts.current < 5) { // Limit reconnect attempts
+                            wsReconnectAttempts.current++;
+                            sendTelegramLog(`Attempting to reconnect WS in ${delay / 1000} seconds (attempt ${wsReconnectAttempts.current}).`, 'JS_LOG');
+                            wsReconnectTimeout.current = setTimeout(() => connectBlackjackWebSocket(), delay);
+                        } else {
+                            sendTelegramLog('Max WebSocket reconnect attempts reached. Please refresh.', 'JS_ERROR');
+                            setBlackjackGameMessage('Відключено від гри. Спробуйте оновити сторінку.');
+                        }
                     };
 
                     newWs.onerror = (error) => {
-                        sendTelegramLog(`Blackjack WS: Error: ${error.message}`, 'JS_ERROR');
-                        setBlackjackGameMessage(`Помилка підключення: ${error.message}`);
+                        sendTelegramLog(`Blackjack WS: Error: ${error.message || error}`, 'JS_ERROR');
+                        setBlackjackGameMessage(`Помилка підключення: ${error.message || error}`);
                         setBlackjackRoomState(prev => ({ ...prev, status: "error", room_id: null, timer: 0 })); // Reset timer on error
+                        if (wsRef.current) {
+                            wsRef.current.close(); // Force close to trigger onclose and reconnect logic
+                        }
                         wsRef.current = null;
                     };
 
@@ -330,13 +371,22 @@
 
             useEffect(() => {
                 fetchUserData(); 
-            }, []); 
+            }, [fetchUserData]); 
 
             // Cleanup WebSocket on component unmount (when the entire app closes)
             useEffect(() => {
                 return () => {
                     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                         sendTelegramLog('UserProvider cleanup: Closing WebSocket connection.');
+                        // Explicitly send a leave_room message before closing
+                        if (user.userId && blackjackRoomState.room_id) {
+                            try {
+                                wsRef.current.send(JSON.stringify({ action: 'leave_room', user_id: user.userId, room_id: blackjackRoomState.room_id }));
+                                sendTelegramLog(`UserProvider cleanup: Sent leave_room for user ${user.userId} from room ${blackjackRoomState.room_id}.`);
+                            } catch (e) {
+                                sendTelegramLog(`UserProvider cleanup: Error sending leave_room: ${e.message}`, 'JS_ERROR');
+                            }
+                        }
                         wsRef.current.close(1000, "App unmounted.");
                     }
                     wsRef.current = null;
@@ -344,8 +394,12 @@
                     if (sendWsMessageDebounceTimer.current) {
                         clearTimeout(sendWsMessageDebounceTimer.current);
                     }
+                    if (wsReconnectTimeout.current) {
+                        clearTimeout(wsReconnectTimeout.current);
+                        wsReconnectTimeout.current = null;
+                    }
                 };
-            }, [sendTelegramLog]);
+            }, [sendTelegramLog, user.userId, blackjackRoomState.room_id]);
 
 
             const getGameStatusMessage = (state, currentUserId) => {
@@ -360,19 +414,36 @@
                 
                 // Якщо поточний користувач не в списку гравців кімнати, але кімната активна
                 if (!currentPlayer && state.status !== "disconnected" && state.status !== "error") {
-                     return "Приєднуємось до гри...";
+                    return "Приєднуємось до гри...";
                 }
                 // Якщо користувач відключений або помилка, і його немає в списку (або він був видалений)
                 if (!currentPlayer && (state.status === "disconnected" || state.status === "error")) {
                     return "Ви відключені від кімнати. Спробуйте оновити.";
                 }
 
+                // Helper to check if all players in the room have completed their betting phase
+                const areAllPlayersFinishedBetting = () => {
+                    if (!state.players || state.players.length === 0) return false;
+                    // A player is considered "finished betting" if they have placed a bet (has_bet=true)
+                    // OR if they are not playing this round (is_playing=false, e.g., due to timeout/insufficient funds)
+                    return state.players.every(p => p.has_bet || !p.is_playing);
+                };
+
 
                 switch (state.status) {
                     case "connecting": return "Підключення до сервера...";
                     case "waiting": return `Очікування гравців (${state.player_count}/${state.min_players})`;
                     case "starting_timer": return `Гра розпочнеться через ${state.timer} секунд! (${state.player_count}/${state.min_players})`;
-                    case "betting": return "Зробіть вашу ставку!";
+                    case "betting": 
+                        if (currentPlayer && currentPlayer.has_bet) {
+                            if (areAllPlayersFinishedBetting()) {
+                                return "Всі ставки зроблені, раунд починається!";
+                            } else {
+                                return "Ваша ставка прийнята. Очікування інших гравців...";
+                            }
+                        } else {
+                            return "Зробіть вашу ставку!";
+                        }
                     case "playing": 
                         if (state.current_player_turn === currentUserId) {
                             return "Ваш хід! (Удар / Стоп)";
@@ -457,6 +528,7 @@
             if (modalElement && modalMessageElement) {
                 modalMessageElement.innerHTML = `<h3 class="text-xl font-bold mb-2">${title}</h3><p>${msg}</p>`;
                 modalElement.classList.add('active');
+                modalElement.classList.remove('hidden'); // Ensure it's visible
                 if (window.Telegram && window.Telegram.WebApp) {
                     Telegram.WebApp.sendData(`JS_LOG: Showing modal: ${title} - ${msg.substring(0, Math.min(msg.length, 50))}`);
                 }
@@ -466,12 +538,20 @@
         document.addEventListener('DOMContentLoaded', () => {
             const customModal = document.getElementById('customModal');
             if (customModal) {
-                customModal.querySelector('.close-button').addEventListener('click', () => {
+                const closeButton = customModal.querySelector('.close-button');
+                const okButton = customModal.querySelector('.modal-content button');
+                
+                const closeModal = () => {
                     customModal.classList.remove('active');
-                });
-                customModal.querySelector('.modal-content button').addEventListener('click', () => {
-                    customModal.classList.remove('active');
-                });
+                    customModal.classList.add('hidden'); // Hide it
+                };
+
+                if (closeButton) {
+                    closeButton.addEventListener('click', closeModal);
+                }
+                if (okButton) {
+                    okButton.addEventListener('click', closeModal);
+                }
             }
             const audioPrompt = document.getElementById('audioPrompt');
             if (audioPrompt) {
@@ -910,7 +990,7 @@
             // Effect to update local timer based on blackjackRoomState.status
             useEffect(() => {
                 let timerInterval;
-                if (blackjackRoomState.status === "starting_timer" && blackjackRoomState.timer > 0) {
+                if ((blackjackRoomState.status === "starting_timer" || blackjackRoomState.status === "betting" || blackjackRoomState.status === "playing") && blackjackRoomState.timer > 0) {
                     setLocalTimer(blackjackRoomState.timer); // Set initial local timer from backend
                     timerInterval = setInterval(() => {
                         setLocalTimer(prevTimer => {
@@ -922,7 +1002,7 @@
                         });
                     }, 1000);
                 } else {
-                    setLocalTimer(0); // Reset timer if not in starting_timer state
+                    setLocalTimer(0); // Reset timer if not in a timed state
                 }
                 return () => clearInterval(timerInterval); // Cleanup interval on unmount or status change
             }, [blackjackRoomState.status, blackjackRoomState.timer]); // Depend on backend timer for initial sync
@@ -990,7 +1070,7 @@
                     </div>
 
                     {/* Timer display for starting game - now uses localTimer */}
-                    {blackjackRoomState.status === "starting_timer" && localTimer > 0 && (
+                    {(blackjackRoomState.status === "starting_timer" || blackjackRoomState.status === "betting" || blackjackRoomState.status === "playing") && localTimer > 0 && (
                         <div className="text-4xl font-extrabold text-red-500 mb-4 animate-pulse-fast">
                             {localTimer}
                         </div>
@@ -1046,6 +1126,14 @@
                             <p className="text-center text-yellow-300 font-semibold text-lg">
                                 Новий раунд незабаром...
                             </p>
+                        )}
+                        {blackjackRoomState.status === "disconnected" && (
+                            <button
+                                onClick={connectBlackjackWebSocket}
+                                className="spin-button bg-gradient-to-r from-gray-500 to-gray-600 text-white py-3 px-6 rounded-full text-lg shadow-xl transition-all duration-300 transform hover:scale-105 active:scale-95 w-full uppercase"
+                            >
+                                Підключитись до гри
+                            </button>
                         )}
                     </div>
 
