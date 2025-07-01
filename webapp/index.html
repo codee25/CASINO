@@ -257,31 +257,36 @@
             const modalMessageElement = document.getElementById('modalMessage');
             if (modalElement && modalMessageElement) {
                 modalMessageElement.innerHTML = `<h3 class="text-xl font-bold mb-2">${title}</h3><p>${msg}</p>`;
-                modalElement.classList.add('active');
-                modalElement.classList.remove('hidden'); // Ensure it's visible
+                modalElement.classList.remove('hidden');
+                modalElement.classList.add('active'); // Add active for visibility and opacity
+                modalElement.style.pointerEvents = 'auto'; // Ensure clicks pass through
                 modalElement.style.zIndex = '1000'; // Ensure it's on top of everything
                 if (window.Telegram && window.Telegram.WebApp) {
                     Telegram.WebApp.sendData(`JS_LOG: Showing modal: ${title} - ${msg.substring(0, Math.min(msg.length, 50))}`);
                 }
 
                 // Re-attach event listeners every time the modal is shown
-                // This resolves the issue where buttons become unresponsive after first use
                 const closeButton = modalElement.querySelector('.close-button');
-                const okButton = modalElement.querySelector('.modal-content button'); // Selects the first button, which is the OK button
+                const okButton = modalElement.querySelector('.modal-content button'); 
 
                 const closeModal = () => {
                     modalElement.classList.remove('active');
-                    modalElement.classList.add('hidden'); // Hide it
-                    modalElement.style.zIndex = ''; // Reset z-index
+                    // Use a timeout to hide after transition (if any)
+                    setTimeout(() => {
+                        modalElement.classList.add('hidden');
+                        modalElement.style.pointerEvents = 'none'; // Disable clicks when hidden
+                        modalElement.style.zIndex = ''; // Reset z-index
+                    }, 300); // Match CSS transition duration
                 };
 
+                // Clear previous handlers to prevent duplicates
                 if (closeButton) {
-                    closeButton.onclick = null; // Clear previous handler to prevent duplicates
-                    closeButton.onclick = closeModal; // Set new handler
+                    closeButton.onclick = null; 
+                    closeButton.onclick = closeModal; 
                 }
                 if (okButton) {
-                    okButton.onclick = null; // Clear previous handler
-                    okButton.onclick = closeModal; // Set new handler
+                    okButton.onclick = null; 
+                    okButton.onclick = closeModal; 
                 }
             }
         }
@@ -735,7 +740,7 @@
                 
                 const currentPlayer = state.players.find(p => p.user_id === currentUserId);
                 
-                if (!currentPlayer && state.status !== "disconnected" && state.status !== "error") {
+                if (!currentPlayer && (state.status !== "disconnected" && state.status !== "error")) {
                     return "Приєднуємось до гри...";
                 }
                 if (!currentPlayer && (state.status === "disconnected" || state.status === "error")) {
@@ -1542,7 +1547,7 @@
                     </div>
 
                     {/* Custom Modal for Alerts */}
-                    <div id="customModal" className="modal fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-70 hidden">
+                    <div id="customModal" className="modal fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-70 hidden transition-opacity duration-300 opacity-0 pointer-events-none">
                         <div className="modal-content bg-gray-800 rounded-xl shadow-2xl p-6 md:p-8 text-center w-11/12 max-w-sm relative border-2 border-yellow-400">
                             {/* Close button that is part of the modal content, hence its event listener is now managed in showCustomModal */}
                             <button className="close-button absolute top-2 right-4 text-gray-400 hover:text-white text-3xl font-bold transition-colors duration-200">&times;</button>
