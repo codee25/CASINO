@@ -10,1496 +10,901 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.9.1/gsap.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.min.js"></script>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 </head>
-<body class="flex flex-col items-center justify-between w-screen h-screen bg-gradient-to-br from-purple-900 via-gray-900 to-indigo-900 text-white overflow-hidden">
+<body class="flex flex-col items-center justify-between w-screen h-screen bg-gradient-to-br from-purple-900 via-gray-900 to-indigo-900 text-white overflow-hidden font-inter">
     <div id="root" class="relative w-full h-full flex flex-col items-center justify-start">
         <!-- React App will be mounted here -->
         <p id="initialLoadingMessage" class="text-xl text-white mt-10">
-            Завантаження гри... Будь ласка, зачекайте.
+            Завантаження гри... Будь ласка, зачекайте...
         </p>
     </div>
-    
-    <!-- React and ReactDOM scripts -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 
-    <!-- Your entire React App - processed by Babel in the browser -->
-    <script type="text/babel" data-presets="react">
-        // Log at the very beginning of this script
-        if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
-            Telegram.WebApp.sendData('JS_LOG: Babel script block started.');
-        } else {
-            console.error("JS_ERROR: Telegram.WebApp not available at Babel script block start.");
-        }
+    <script type="text/babel">
+        const { useState, useEffect, useRef, createContext, useContext, useCallback } = React;
 
-        // Use window.React for unpkg.com global React
-        const React = window.React;
-        const { useState, useEffect, createContext, useContext, useCallback, useRef } = window.React;
-        const ReactDOM = window.ReactDOM; // Ensure ReactDOM is also accessed globally
+        // --- Global Configuration ---
+        // !!! ВАЖЛИВО: Замініть цей URL на URL вашого бекенду на Render !!!
+        // Наприклад: https://your-backend-app.onrender.com
+        const API_BASE_URL = "https://casino-0h0l.onrender.com"; 
 
-        // Ensure Tone is globally available from the CDN script in index.html
-        const Tone = window.Tone || {
-            context: { state: 'suspended', resume: async () => { console.warn("Tone.context.resume not available. Tone.js might not be loaded."); }, start: async () => { console.warn("Tone.context.start not available. Tone.js might not be loaded."); } },
-            MembraneSynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; },
-            PolySynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; },
-            NoiseSynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; }
+        // --- Telegram WebApp Integration ---
+        const sendTelegramLog = (message, type = 'JS_LOG') => {
+            if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
+                const fullMessage = `${type}: ${message}`;
+                Telegram.WebApp.sendData(fullMessage.substring(0, Math.min(fullMessage.length, 250))); // Limit message length
+            } else {
+                console.log(`[Telegram Log - ${type}]: ${message}`);
+            }
         };
 
+        // Ensure Telegram WebApp is ready and expanded
+        if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
+            Telegram.WebApp.ready();
+            Telegram.WebApp.expand();
+            sendTelegramLog('Telegram WebApp ready and expanded.', 'JS_VERY_FIRST_LOG');
+        }
 
-        // -----------------------------------------------------------------------------
-        // Global User Context
-        // -----------------------------------------------------------------------------
+        // --- User Context for Global State Management ---
         const UserContext = createContext(null);
 
         const UserProvider = ({ children }) => {
             const [user, setUser] = useState({
                 userId: null,
-                username: 'Unnamed Player',
+                username: 'Завантаження...',
                 balance: 0,
                 xp: 0,
                 level: 1,
-                nextLevelXp: 100, // Default, will be updated from backend
+                nextLevelXp: 100,
                 lastDailyBonusClaim: null,
-                lastQuickBonusClaim: null
+                lastQuickBonusClaim: null,
+                blackjackRoom: null, // Current blackjack room state
+                blackjackPlayers: [], // List of players in blackjack room
+                blackjackStatus: 'waiting', // waiting, starting_timer, betting, playing, round_end
+                blackjackCurrentPlayerTurn: null,
+                blackjackTimer: 0,
+                blackjackDealerHand: [],
+                blackjackDealerScore: 0,
             });
-            const [isLoading, setIsLoading] = useState(true);
+            const [loading, setLoading] = useState(true);
             const [error, setError] = useState(null);
-            const isFetchingRef = useRef(false);
+            const wsRef = useRef(null); // WebSocket reference
+            const wsReconnectAttempts = useRef(0);
+            const MAX_WS_RECONNECT_ATTEMPTS = 5;
+            const wsReconnectTimeout = useRef(null);
 
-            // WebSocket state and ref for global management
-            const wsRef = useRef(null);
-            const [blackjackRoomState, setBlackjackRoomState] = useState({
-                room_id: null,
-                status: "disconnected", // Default to disconnected
-                dealer_hand: [], 
-                dealer_score: 0, 
-                players: [],
-                current_player_turn: null,
-                player_count: 0,
-                min_players: 0,
-                max_players: 0,
-                timer: 0
-            });
-            const [blackjackGameMessage, setBlackjackGameMessage] = useState("Натисніть 'Блекджек', щоб приєднатися.");
-
-
-            // Backend API URL (ВАШ АКТУАЛЬНИЙ URL!)
-            const API_BASE_URL = 'https://casino-0h0l.onrender.com'; // <--- ЗМІНІТЬ ЦЕЙ РЯДОК!
-
-            // Helper to send logs to Telegram bot for debugging
-            const sendTelegramLog = useCallback((message, type = 'JS_LOG') => {
-                if (window.Telegram && window.Telegram.WebApp) {
-                    window.Telegram.WebApp.sendData(`${type}: ${message}`);
+            // Function to send messages via WebSocket
+            const sendWsMessage = useCallback((action, data = {}) => {
+                if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                    const message = { action, ...data };
+                    wsRef.current.send(JSON.stringify(message));
+                    sendTelegramLog(`WS Sent: ${action}`, 'JS_DEBUG');
                 } else {
-                    console.log(`[${type}] ${message}`);
+                    sendTelegramLog(`WS Error: Cannot send message, WebSocket not open. Action: ${action}`, 'JS_ERROR');
                 }
             }, []);
 
-            const fetchUserData = useCallback(async () => {
-                if (isFetchingRef.current) {
-                    sendTelegramLog('fetchUserData: Already fetching, skipping call.', 'JS_DEBUG');
-                    return; // Prevent multiple concurrent fetches
-                }
-
-                isFetchingRef.current = true;
-                setIsLoading(true);
-                setError(null);
-                let currentUserId = null;
-                let currentUsername = 'Unnamed Player';
-
-                if (window.Telegram && window.Telegram.WebApp) {
-                    window.Telegram.WebApp.expand(); 
-                    if (window.Telegram.WebApp.initDataUnsafe?.user?.id) {
-                        currentUserId = window.Telegram.WebApp.initDataUnsafe.user.id;
-                        currentUsername = window.Telegram.WebApp.initDataUnsafe.user.username || window.Telegram.WebApp.initDataUnsafe.user.first_name || `Гравець ${String(currentUserId).slice(-4)}`;
-                        sendTelegramLog(`WebApp Init: User ID ${currentUserId}, Username ${currentUsername}`);
-                    } else {
-                        sendTelegramLog('WebApp initialized, but user ID is missing from initDataUnsafe. Setting dummy user.', 'JS_WARN');
-                        currentUserId = 'dummy_user_12345';
-                        currentUsername = 'DemoPlayer';
-                        setError('Для повної функціональності запустіть гру через Telegram.');
-                    }
-                } else {
-                    sendTelegramLog('Telegram.WebApp NOT Initialized (likely direct browser access or local testing). Setting dummy user.', 'JS_WARN');
-                    currentUserId = 'dummy_user_local_123';
-                    currentUsername = 'LocalPlayer';
-                    setError('Для повної функціональності запустіть гру через Telegram. (Локально)');
-                }
-
-                try {
-                    if (currentUserId) {
-                        const response = await fetch(`${API_BASE_URL}/api/get_balance`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ user_id: currentUserId, username: currentUsername })
-                        });
-
-                        if (!response.ok) {
-                            const errData = await response.json();
-                            sendTelegramLog(`Balance fetch API failed: ${errData.error || 'Unknown error'}`, 'JS_ERROR');
-                            throw new Error(errData.error || 'Failed to fetch user data');
-                        }
-
-                        const data = await response.json();
-                        setUser(prevUser => {
-                            const newUserState = {
-                                userId: currentUserId,
-                                username: currentUsername,
-                                balance: data.balance,
-                                xp: data.xp,
-                                level: data.level,
-                                nextLevelXp: data.next_level_xp,
-                                lastDailyBonusClaim: data.last_daily_bonus_claim ? new Date(data.last_daily_bonus_claim) : null,
-                                lastQuickBonusClaim: data.last_quick_bonus_claim ? new Date(data.last_quick_bonus_claim) : null
-                            };
-                            if (prevUser.level !== 1 && newUserState.level > prevUser.level) {
-                                playLevelUpSound();
-                                showCustomModal(`🎉 Ви досягли Рівня ${newUserState.level}! 🎉`, "Підвищення Рівня!");
-                            }
-                            return newUserState;
-                        });
-                        sendTelegramLog('User data fetched and updated successfully from backend.');
-                    } else {
-                        sendTelegramLog('No valid user ID available for fetching data. Skipping API call.', 'JS_WARN');
-                        setUser(prevUser => ({
-                            ...prevUser,
-                            userId: currentUserId,
-                            username: currentUsername,
-                            balance: 10000,
-                            xp: 0,
-                            level: 1,
-                            nextLevelXp: 100
-                        }));
-                    }
-                } catch (err) {
-                    console.error('Error fetching user data:', err);
-                    setError(err.message || 'Помилка звʼязку з сервером. Перевірте зʼєднання.');
-                    sendTelegramLog(`Error during user data fetch: ${err.message}`, 'JS_ERROR');
-                } finally {
-                    setIsLoading(false);
-                    isFetchingRef.current = false;
-                }
-            }, [sendTelegramLog, API_BASE_URL]);
-
-            // Debounce for sendWsMessage to prevent spamming request_state
-            const sendWsMessageDebounceTimer = useRef(null);
-            const sendWsMessage = useCallback((action, payload = {}) => {
-                // Clear any existing debounce timer for 'request_state' action
-                if (action === "request_state" && sendWsMessageDebounceTimer.current) {
-                    clearTimeout(sendWsMessageDebounceTimer.current);
-                }
-
-                // If it's a 'request_state' action, debounce it
-                if (action === "request_state") {
-                    sendWsMessageDebounceTimer.current = setTimeout(() => {
-                        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                            const message = { action, ...payload };
-                            wsRef.current.send(JSON.stringify(message));
-                            sendTelegramLog(`WS Sent (debounced): ${action} with payload ${JSON.stringify(payload).substring(0, 50)}`);
-                        } else {
-                            sendTelegramLog(`WS Error (debounced): Tried to send ${action} but WebSocket not open. Current readyState: ${wsRef.current ? wsRef.current.readyState : 'null'}`, 'JS_ERROR');
-                            // Only attempt to re-establish if not already connecting
-                            // connectBlackjackWebSocket(); // Do not call here, let the component manage it
-                        }
-                    }, 500); // Debounce for 500ms
-                } else {
-                    // For other actions, send immediately
-                    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                        const message = { action, ...payload };
-                        wsRef.current.send(JSON.stringify(message));
-                        sendTelegramLog(`WS Sent (immediate): ${action} with payload ${JSON.stringify(payload).substring(0, 50)}`);
-                    } else {
-                        sendTelegramLog(`WS Error (immediate): Tried to send ${action} but WebSocket not open. Current readyState: ${wsRef.current ? wsRef.current.readyState : 'null'}`, 'JS_ERROR');
-                        // Only attempt to re-establish if not already connecting
-                        // connectBlackjackWebSocket(); // Do not call here, let the component manage it
-                    }
-                }
-            }, [sendTelegramLog, user.userId]);
-
-            // Blackjack WebSocket Connection Management
-            const connectBlackjackWebSocket = useCallback(() => {
-                if (!user.userId || !API_BASE_URL) {
-                    sendTelegramLog('connectBlackjackWebSocket: User ID or API_BASE_URL not available, skipping WS connection.', 'JS_DEBUG');
+            // Function to connect WebSocket
+            const connectBlackjackWebSocket = useCallback(async () => {
+                if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
+                    sendTelegramLog('WS already open or connecting, skipping new connection attempt.', 'JS_DEBUG');
                     return;
                 }
 
-                if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                    sendTelegramLog('connectBlackjackWebSocket: Existing WS connection found and open, reusing.', 'JS_DEBUG');
+                if (!user.userId) {
+                    sendTelegramLog('WS: user.userId not available for connection.', 'JS_DEBUG');
                     return;
                 }
+
+                sendTelegramLog(`Attempting to connect WebSocket to ${API_BASE_URL.replace('https', 'wss')}/ws/${user.userId}`, 'JS_LOG');
                 
-                if (wsRef.current && (wsRef.current.readyState === WebSocket.CLOSING || wsRef.current.readyState === WebSocket.CLOSED)) {
-                    sendTelegramLog('connectBlackjackWebSocket: Existing WS connection found but closing/closed, clearing ref.', 'JS_DEBUG');
-                    wsRef.current = null;
-                }
-
-                if (!wsRef.current) {
-                    const websocketUrl = `wss://${new URL(API_BASE_URL).host}/ws/${user.userId}`;
-                    sendTelegramLog(`connectBlackjackWebSocket: Attempting to establish NEW WebSocket to: ${websocketUrl}`);
-                    setBlackjackRoomState(prev => ({ ...prev, status: "connecting" })); // Set connecting status
-                    setBlackjackGameMessage("Підключення до гри...");
-
-                    const newWs = new WebSocket(websocketUrl);
-
-                    newWs.onopen = () => {
-                        sendTelegramLog("Blackjack WS: Connected.");
-                        setBlackjackGameMessage("Підключено. Шукаємо кімнату...");
-                        // IMPORTANT: request_state is now sent by BlackjackGame component on mount
+                try {
+                    wsRef.current = new WebSocket(`${API_BASE_URL.replace('https', 'wss')}/ws/${user.userId}`);
+                    
+                    wsRef.current.onopen = () => {
+                        sendTelegramLog('WebSocket connection opened successfully.', 'JS_LOG');
+                        wsReconnectAttempts.current = 0; // Reset reconnect attempts on successful connection
+                        if (wsReconnectTimeout.current) {
+                            clearTimeout(wsReconnectTimeout.current);
+                            wsReconnectTimeout.current = null;
+                        }
+                        sendWsMessage("request_state"); // Request initial state after connection
                     };
 
-                    newWs.onmessage = (event) => {
+                    wsRef.current.onmessage = (event) => {
                         try {
-                            const message = JSON.parse(event.data);
-                            // Handle ping messages to keep connection alive
-                            if (message.type === "ping") {
-                                // Respond with pong to server's ping
-                                newWs.send(JSON.stringify({ type: "pong" }));
-                                sendTelegramLog("Blackjack WS: Received ping, sent pong.");
-                                return; 
-                            }
+                            const data = JSON.parse(event.data);
+                            // sendTelegramLog(`WS Received: ${JSON.stringify(data)}`, 'JS_DEBUG'); // Too verbose for production
+                            
+                            if (data.type === "ping") {
+                                sendWsMessage("pong"); // Respond to ping
+                            } else if (data.type === "error") {
+                                setError(data.message);
+                                sendTelegramLog(`WS Error from server: ${data.message}`, 'JS_ERROR');
+                            } else if (data.type === "game_message") {
+                                // Display game-specific messages (e.g., "You busted!")
+                                setError(data.message); // Using error state to display temporary messages
+                                setTimeout(() => setError(null), 3000); // Clear message after 3 seconds
+                            } else if (data.type === "round_result") {
+                                // Handle round results, update user balance/xp/level
+                                const message = data.message;
+                                const winnings = data.winnings;
+                                const newBalance = data.balance;
+                                const newXp = data.xp;
+                                const newLevel = data.level;
+                                const nextLevelXp = data.next_level_xp;
+                                const finalPlayerScore = data.final_player_score;
+                                const finalPlayerHand = data.final_player_hand;
 
-                            sendTelegramLog(`Blackjack WS: Received: ${JSON.stringify(message).substring(0, 100)}`);
-
-                            if (message.type === "error") {
-                                showCustomModal(message.message, "Помилка Гри");
-                                setBlackjackGameMessage(message.message);
-                            } else if (message.type === "game_message") {
-                                setBlackjackGameMessage(message.message);
-                            } else if (message.type === "level_up") {
-                                playLevelUpSound();
-                                showCustomModal(`🎉 Ви досягли Рівня ${message.level}! 🎉`, "Підвищення Рівня!");
-                                // Level up also triggers fetchUserData to ensure all user stats are fresh
-                                fetchUserData();
-                            } else if (message.room_id) { // It's a room state update
-                                setBlackjackRoomState(prevState => {
-                                    // Update local timer only if status is starting_timer, otherwise reset
-                                    const newTimer = message.status === "starting_timer" ? message.timer : 0;
-                                    return { ...message, timer: newTimer }; 
-                                });
-                                // Only update game message if it's not a round result message
-                                if (message.type !== "round_result") {
-                                    setBlackjackGameMessage(getGameStatusMessage(message, user.userId));
-                                }
-                            } else if (message.type === "round_result") {
-                                const { message: resultMsg, winnings, balance, xp, level, next_level_xp, final_player_score } = message; // Removed final_dealer_score
-                                setBlackjackGameMessage(resultMsg);
-                                showCustomModal(
-                                    `Результат: ${resultMsg}<br/>Ваш рахунок: ${final_player_score}<br/>Виграш: ${winnings} фантиків!`,
-                                    "Результат Раунду"
-                                );
-                                if (winnings > 0) {
-                                    playWinSoundEffect();
-                                } else {
-                                    playLoseSoundEffect();
-                                }
-                                // Update user state directly from round_result message
-                                setUser(prevUser => ({
-                                    ...prevUser,
-                                    balance: balance,
-                                    xp: xp,
-                                    level: level,
-                                    nextLevelXp: next_level_xp // Ensure nextLevelXp is also updated
+                                setUser(prev => ({
+                                    ...prev,
+                                    balance: newBalance,
+                                    xp: newXp,
+                                    level: newLevel,
+                                    nextLevelXp: nextLevelXp,
+                                    blackjackStatus: 'round_end', // Ensure status is round_end
+                                    blackjackDealerHand: data.final_dealer_hand || [], // Dealer hand might be empty if no dealer
+                                    blackjackDealerScore: data.final_dealer_score || 0,
+                                    blackjackPlayers: prev.blackjackPlayers.map(p => 
+                                        p.user_id === user.userId ? { ...p, hand: finalPlayerHand, score: finalPlayerScore } : p
+                                    )
                                 }));
-                                sendTelegramLog('User data updated from round_result message.');
+                                setError(`${message} Виграш: ${winnings}. Баланс: ${newBalance}`);
+                                setTimeout(() => setError(null), 5000); // Clear message after 5 seconds
+                                sendTelegramLog(`WS Round Result: ${message}, Winnings: ${winnings}`, 'JS_LOG');
+
+                            } else if (data.type === "level_up") {
+                                setError(`🎉 НОВИЙ РІВЕНЬ: ${data.level}! 🎉`);
+                                setTimeout(() => setError(null), 5000);
+                                sendTelegramLog(`WS Level Up: ${data.level}`, 'JS_LOG');
+                            }
+                            else {
+                                // This is a general room state update
+                                setUser(prev => ({
+                                    ...prev,
+                                    blackjackRoom: data.room_id,
+                                    blackjackPlayers: data.players,
+                                    blackjackStatus: data.status,
+                                    blackjackCurrentPlayerTurn: data.current_player_turn,
+                                    blackjackTimer: data.timer,
+                                    blackjackDealerHand: data.dealer_hand,
+                                    blackjackDealerScore: data.dealer_score,
+                                }));
+                                // sendTelegramLog(`WS State Update: Status=${data.status}, Timer=${data.timer}`, 'JS_DEBUG');
                             }
                         } catch (e) {
-                            sendTelegramLog(`Blackjack WS: Error parsing message or in onmessage handler: ${e.message}`, 'JS_ERROR');
-                            console.error("Blackjack WS onmessage error:", e);
+                            sendTelegramLog(`WS Error parsing message: ${e.message}, Data: ${event.data.substring(0, 100)}`, 'JS_ERROR');
+                            setError("Помилка обробки даних гри.");
                         }
                     };
 
-                    newWs.onclose = (event) => {
-                        sendTelegramLog(`Blackjack WS: Disconnected. Code: ${event.code}, Reason: ${event.reason}.`, 'JS_WARN');
-                        setBlackjackGameMessage("Відключено від гри. Спробуйте оновити.");
-                        setBlackjackRoomState(prev => ({ ...prev, status: "disconnected", room_id: null, timer: 0 })); // Reset timer on disconnect
-                        wsRef.current = null;
+                    wsRef.current.onclose = (event) => {
+                        sendTelegramLog(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason}`, 'JS_WARN');
+                        setUser(prev => ({ ...prev, blackjackStatus: 'disconnected' }));
+                        // Attempt to reconnect after a delay
+                        if (wsReconnectAttempts.current < MAX_WS_RECONNECT_ATTEMPTS) {
+                            wsReconnectAttempts.current++;
+                            const delay = Math.min(1000 * wsReconnectAttempts.current, 5000); // Exponential backoff up to 5 seconds
+                            sendTelegramLog(`Attempting to reconnect WS in ${delay / 1000} seconds (attempt ${wsReconnectAttempts.current}).`, 'JS_LOG');
+                            wsReconnectTimeout.current = setTimeout(() => connectBlackjackWebSocket(), delay);
+                        } else {
+                            sendTelegramLog('Max WebSocket reconnect attempts reached. Please refresh.', 'JS_ERROR');
+                            setError('Відключено від гри. Спробуйте оновити сторінку.');
+                        }
                     };
 
-                    newWs.onerror = (error) => {
-                        sendTelegramLog(`Blackjack WS: Error: ${error.message}`, 'JS_ERROR');
-                        setBlackjackGameMessage(`Помилка підключення: ${error.message}`);
-                        setBlackjackRoomState(prev => ({ ...prev, status: "error", room_id: null, timer: 0 })); // Reset timer on error
-                        wsRef.current = null;
+                    wsRef.current.onerror = (error) => {
+                        sendTelegramLog(`WebSocket error: ${error.message || error}`, 'JS_ERROR');
+                        setError('Помилка підключення до гри.');
+                        wsRef.current.close(); // Force close to trigger onclose and reconnect logic
                     };
 
-                    wsRef.current = newWs;
+                } catch (e) {
+                    sendTelegramLog(`Failed to establish WS connection: ${e.message}`, 'JS_FATAL_REACT_ERROR');
+                    setError('Не вдалося підключитися до гри. Спробуйте пізніше.');
                 }
-            }, [user.userId, API_BASE_URL, sendTelegramLog, fetchUserData, setUser]);
+            }, [user.userId, sendWsMessage]);
 
+            // Fetch user data from backend
+            const fetchUserData = useCallback(async () => {
+                if (!user.userId) {
+                    sendTelegramLog('fetchUserData: User ID not available, skipping fetch.', 'JS_DEBUG');
+                    return;
+                }
+                setLoading(true);
+                setError(null);
+                try {
+                    sendTelegramLog(`Fetching user data from ${API_BASE_URL}/api/get_balance for userId: ${user.userId}`, 'JS_LOG');
+                    const response = await fetch(`${API_BASE_URL}/api/get_balance`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ 
+                            user_id: user.userId, 
+                            username: Telegram.WebApp.initDataUnsafe?.user?.username || Telegram.WebApp.initDataUnsafe?.user?.first_name || 'Unnamed Player'
+                        }),
+                    });
 
-            useEffect(() => {
-                fetchUserData(); 
-            }, []); 
-
-            // Cleanup WebSocket on component unmount (when the entire app closes)
-            useEffect(() => {
-                return () => {
-                    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                        sendTelegramLog('UserProvider cleanup: Closing WebSocket connection.');
-                        // Explicitly send a leave_room message before closing
-                        if (user.userId && blackjackRoomState.room_id) {
-                            try {
-                                wsRef.current.send(JSON.stringify({ action: 'leave_room', user_id: user.userId, room_id: blackjackRoomState.room_id }));
-                                sendTelegramLog(`UserProvider cleanup: Sent leave_room for user ${user.userId} from room ${blackjackRoomState.room_id}.`);
-                            } catch (e) {
-                                sendTelegramLog(`UserProvider cleanup: Error sending leave_room: ${e.message}`, 'JS_ERROR');
-                            }
-                        }
-                        wsRef.current.close(1000, "App unmounted.");
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || 'Failed to fetch user data');
                     }
-                    wsRef.current = null;
-                    // Clear debounce timer on unmount
-                    if (sendWsMessageDebounceTimer.current) {
-                        clearTimeout(sendWsMessageDebounceTimer.current);
+
+                    const data = await response.json();
+                    setUser(prev => ({
+                        ...prev,
+                        username: data.username,
+                        balance: data.balance,
+                        xp: data.xp,
+                        level: data.level,
+                        nextLevelXp: data.next_level_xp,
+                        lastDailyBonusClaim: data.last_daily_bonus_claim,
+                        lastQuickBonusClaim: data.last_quick_bonus_claim,
+                    }));
+                    sendTelegramLog(`User data fetched successfully. Balance: ${data.balance}`, 'JS_LOG');
+                } catch (e) {
+                    sendTelegramLog(`Error fetching user data: ${e.message}`, 'JS_ERROR');
+                    setError(`Помилка завантаження даних: ${e.message}.`);
+                } finally {
+                    setLoading(false);
+                }
+            }, [user.userId]);
+
+            // Initial setup: Get userId from Telegram WebApp
+            useEffect(() => {
+                if (typeof Telegram !== 'undefined' && Telegram.WebApp && Telegram.WebApp.initDataUnsafe) {
+                    const tgUser = Telegram.WebApp.initDataUnsafe.user;
+                    if (tgUser && tgUser.id) {
+                        setUser(prev => ({ ...prev, userId: tgUser.id }));
+                        sendTelegramLog(`Telegram User ID set: ${tgUser.id}`, 'JS_LOG');
+                    } else {
+                        sendTelegramLog('Telegram User ID not found in initDataUnsafe.', 'JS_ERROR');
+                        setError('Не вдалося отримати ID користувача Telegram.');
+                        setLoading(false);
+                    }
+                } else {
+                    // Fallback for local testing outside Telegram WebApp
+                    const dummyUserId = localStorage.getItem('dummyUserId') || '123456789';
+                    localStorage.setItem('dummyUserId', dummyUserId);
+                    setUser(prev => ({ ...prev, userId: parseInt(dummyUserId) }));
+                    sendTelegramLog('Running outside Telegram WebApp, using dummy user ID.', 'JS_WARN');
+                    setLoading(false);
+                }
+            }, []);
+
+            // Effect to fetch user data when userId is available
+            useEffect(() => {
+                if (user.userId) {
+                    fetchUserData();
+                }
+            }, [user.userId, fetchUserData]);
+
+            // Effect to connect WebSocket when userId is available and not already connected
+            useEffect(() => {
+                let isMounted = true; // Flag to track if component is mounted
+
+                const initWebSocket = async () => {
+                    if (user.userId && !wsRef.current) { // Only connect if userId is available and WS not initialized
+                        sendTelegramLog('Attempting initial WebSocket connection from useEffect.', 'JS_DEBUG');
+                        await connectBlackjackWebSocket();
                     }
                 };
-            }, [sendTelegramLog, user.userId, blackjackRoomState.room_id]); // Added blackjackRoomState.room_id to dependencies
 
+                initWebSocket();
 
-            const getGameStatusMessage = (state, currentUserId) => {
-                if (!state || !state.room_id) {
-                    if (state.status === "connecting") return "Підключення до сервера...";
-                    if (state.status === "disconnected") return "Відключено від гри. Спробуйте оновити.";
-                    if (state.status === "error") return "Помилка гри. Спробуйте оновити.";
-                    return "Очікування кімнати...";
-                }
-                
-                const currentPlayer = state.players.find(p => p.user_id === currentUserId);
-                
-                // Якщо поточний користувач не в списку гравців кімнати, але кімната активна
-                if (!currentPlayer && state.status !== "disconnected" && state.status !== "error") {
-                    return "Приєднуємось до гри...";
-                }
-                // Якщо користувач відключений або помилка, і його немає в списку (або він був видалений)
-                if (!currentPlayer && (state.status === "disconnected" || state.status === "error")) {
-                    return "Ви відключені від кімнати. Спробуйте оновити.";
-                }
+                // Cleanup function for WebSocket on component unmount
+                return () => {
+                    isMounted = false;
+                    if (wsRef.current) {
+                        sendTelegramLog('Closing WebSocket on component unmount.', 'JS_LOG');
+                        wsRef.current.close();
+                        wsRef.current = null;
+                    }
+                    if (wsReconnectTimeout.current) {
+                        clearTimeout(wsReconnectTimeout.current);
+                        wsReconnectTimeout.current = null;
+                    }
+                };
+            }, [user.userId, connectBlackjackWebSocket]); // Depend on user.userId and connectBlackjackWebSocket
 
-
-                switch (state.status) {
-                    case "connecting": return "Підключення до сервера...";
-                    case "waiting": return `Очікування гравців (${state.player_count}/${state.min_players})`;
-                    case "starting_timer": return `Гра розпочнеться через ${state.timer} секунд! (${state.player_count}/${state.min_players})`;
-                    case "betting": return "Зробіть вашу ставку!";
-                    case "playing": 
-                        if (state.current_player_turn === currentUserId) {
-                            return "Ваш хід! (Удар / Стоп)";
-                        } else {
-                            const activePlayer = state.players.find(p => p.user_id === state.current_player_turn);
-                            return `Хід гравця: ${activePlayer ? activePlayer.username : 'Невідомий'}`;
-                        }
-                    case "round_end": return "Раунд завершено. Результати...";
-                    case "disconnected": return "Ви відключені від гри. Спробуйте оновити.";
-                    case "error": return "Помилка гри. Спробуйте оновити.";
-                    default: return `Статус кімнати: ${state.status}`;
-                }
+            const value = {
+                user,
+                loading,
+                error,
+                fetchUserData,
+                sendWsMessage, // Expose sendWsMessage for components
+                connectBlackjackWebSocket, // Expose connectBlackjackWebSocket for manual reconnect if needed
             };
 
-
             return (
-                <UserContext.Provider value={{ 
-                    user, setUser, fetchUserData, isLoading, error, API_BASE_URL, sendTelegramLog,
-                    blackjackRoomState, blackjackGameMessage, sendWsMessage, setBlackjackGameMessage,
-                    connectBlackjackWebSocket 
-                }}>
+                <UserContext.Provider value={value}>
                     {children}
                 </UserContext.Provider>
             );
         };
 
-        const useUser = () => useContext(UserContext);
+        // --- Components ---
 
+        const BalanceDisplay = () => {
+            const { user, loading, error } = useContext(UserContext);
 
-        // -----------------------------------------------------------------------------
-        // Audio Context Setup (Tone.js)
-        // -----------------------------------------------------------------------------
-        let spinStartSound, reelStopSound, winSound, bigWinSound, loseSound, levelUpSound, dailyBonusSound, quickBonusSound, coinFlipSound;
+            if (loading) return <p className="text-center text-gray-400">Завантаження...</p>;
+            if (error) return <p className="text-center text-red-400">{error}</p>;
 
-        async function setupSounds() {
-            if (Tone.context.state !== 'running') {
-                try {
-                    await Tone.start();
-                    console.log("[Audio] AudioContext is running.");
-                    document.getElementById('audioPrompt').style.display = 'none';
-                } catch (e) {
-                    console.error("[Audio] Помилка ініціалізації аудіо:", e);
-                    document.getElementById('audioPrompt').style.display = 'flex';
-                    return;
-                }
-            } else {
-                document.getElementById('audioPrompt').style.display = 'none';
-            }
+            const progress = user.level === 0 ? 0 : ((user.xp - (user.level > 1 ? (user.level - 1) * 100 : 0)) / (user.nextLevelXp - (user.level > 1 ? (user.level - 1) * 100 : 0))) * 100;
 
-            // Initialize sounds ONLY after Tone.start() is successful or if already running
-            if (!spinStartSound) { 
-                spinStartSound = new Tone.MembraneSynth({ envelope: { attack: 0.01, decay: 0.1, sustain: 0.05, release: 0.1 } }).toDestination();
-                reelStopSound = new Tone.MembraneSynth({ envelope: { attack: 0.005, decay: 0.05, sustain: 0.01, release: 0.1 } }).toDestination();
-                winSound = new Tone.PolySynth(Tone.Synth, { oscillator: { type: "sine" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 } }).toDestination();
-                bigWinSound = new Tone.PolySynth(Tone.Synth, { oscillator: { type: "triangle" }, envelope: { attack: 0.05, decay: 0.5, sustain: 0.2, release: 1.0 } }).toDestination();
-                loseSound = new Tone.MembraneSynth({ oscillator: { type: "square" }, envelope: { attack: 0.01, decay: 0.3, sustain: 0.1, release: 0.4 } }).toDestination();
-                levelUpSound = new Tone.PolySynth(Tone.Synth, { oscillator: { type: "sawtooth" }, envelope: { attack: 0.02, decay: 0.3, sustain: 0.2, release: 0.8 } }).toDestination();
-                dailyBonusSound = new Tone.MembraneSynth({ oscillator: { type: "triangle" }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.1, release: 0.5 } }).toDestination();
-                quickBonusSound = new Tone.PolySynth(Tone.Synth, { oscillator: { type: "triangle" }, envelope: { attack: 0.01, decay: 0.1, sustain: 0.05, release: 0.3 } }).toDestination();
-                coinFlipSound = new Tone.MembraneSynth({ oscillator: { type: "square" }, envelope: { attack: 0.01, decay: 0.15, sustain: 0.05, release: 0.2 } }).toDestination();
-            }
-        }
+            return (
+                <div className="w-full max-w-md bg-gray-800 p-4 rounded-xl shadow-lg text-center mb-4 border border-yellow-500">
+                    <h2 className="text-xl font-bold text-yellow-400 mb-2">Імперія Слота</h2>
+                    <p className="text-lg text-white mb-1">Привіт, <span className="font-semibold">{user.username}</span>!</p>
+                    <p className="text-2xl font-bold text-green-400 mb-2">
+                        БАЛАНС: <span className="text-yellow-300">{user.balance}</span> ФАНТИКІВ
+                    </p>
+                    <div className="text-sm text-gray-300 mb-2">
+                        РІВЕНЬ: <span className="font-bold">{user.level}</span> | XP: <span className="font-bold">{user.xp}/{user.nextLevelXp}</span>
+                    </div>
+                    <div className="w-full bg-gray-700 rounded-full h-2.5 mb-4">
+                        <div className="bg-blue-600 h-2.5 rounded-full" style={{ width: `${progress}%` }}></div>
+                    </div>
+                </div>
+            );
+        };
 
-        // Functions to play sounds - check if sound objects are initialized
-        function playSpinStartSound() { if (spinStartSound && Tone.context.state === 'running') spinStartSound.triggerAttackRelease("C4", "8n"); }
-        function playReelStopSound(note = "D4") { if (reelStopSound && Tone.context.state === 'running') reelStopSound.triggerAttackRelease(note, "16n"); }
-        function playWinSoundEffect() { if (winSound && Tone.context.state === 'running') winSound.triggerAttackRelease(["C5", "E5", "G5"], "4n"); }
-        function playBigWinSoundEffect() { if (bigWinSound && Tone.context.state === 'running') bigWinSound.triggerAttackRelease(["C5", "G5", "C6"], "1n"); }
-        function playLoseSoundEffect() { if (loseSound && Tone.context.state === 'running') loseSound.triggerAttackRelease("C3", "4n"); }
-        function playLevelUpSound() { if (levelUpSound && Tone.context.state === 'running') levelUpSound.triggerAttackRelease(["E4", "G4", "C5"], "0.8n"); }
-        function playDailyBonusSound() { if (dailyBonusSound && Tone.context.state === 'running') dailyBonusSound.triggerAttackRelease("G4", "0.5n"); }
-        function playQuickBonusSound() { if (quickBonusSound && Tone.context.state === 'running') quickBonusSound.triggerAttackRelease("A4", "0.2n"); }
-        function playCoinFlipSound() { if (coinFlipSound && Tone.context.state === 'running') coinFlipSound.triggerAttackRelease("C5", "0.1s"); }
-
-
-        // -----------------------------------------------------------------------------
-        // Custom Modal for Alerts
-        // -----------------------------------------------------------------------------
-        function showCustomModal(msg, title = "Повідомлення") {
-            const modalElement = document.getElementById('customModal');
-            const modalMessageElement = document.getElementById('modalMessage');
-            if (modalElement && modalMessageElement) {
-                modalMessageElement.innerHTML = `<h3 class="text-xl font-bold mb-2">${title}</h3><p>${msg}</p>`;
-                modalElement.classList.add('active');
-                if (window.Telegram && window.Telegram.WebApp) {
-                    Telegram.WebApp.sendData(`JS_LOG: Showing modal: ${title} - ${msg.substring(0, Math.min(msg.length, 50))}`);
-                }
-            }
-        }
-        // Add event listeners for modal close buttons outside React for simplicity
-        document.addEventListener('DOMContentLoaded', () => {
-            const customModal = document.getElementById('customModal');
-            if (customModal) {
-                customModal.querySelector('.close-button').addEventListener('click', () => {
-                    customModal.classList.remove('active');
-                });
-                customModal.querySelector('.modal-content button').addEventListener('click', () => {
-                    customModal.classList.remove('active');
-                });
-            }
-            const audioPrompt = document.getElementById('audioPrompt');
-            if (audioPrompt) {
-                const activateAudioButton = document.getElementById('activateAudioButton');
-                if (activateAudioButton) {
-                    activateAudioButton.addEventListener('click', async () => {
-                        await setupSounds();
-                    });
-                }
-                // Initial check for audio context state
-                if (Tone.context.state !== 'running') {
-                    audioPrompt.style.display = 'flex';
-                } else {
-                    audioPrompt.style.display = 'none';
-                }
-            }
-        });
-
-
-        // -----------------------------------------------------------------------------
-        // Slot Machine Game Component
-        // -----------------------------------------------------------------------------
-        const SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀'];
-        const WILD_SYMBOL = '⭐';
-        const SCATTER_SYMBOL = '�';
-        const ALL_REEL_SYMBOLS = [...SYMBOLS, WILD_SYMBOL, SCATTER_SYMBOL];
-        const REEL_HEIGHT_PX = 90; // Default height for a symbol in a reel
-        const REEL_SPIN_CYCLES = 5;
-        const REEL_SPIN_DURATION_BASE = 0.8;
-        const REEL_STOP_DURATION = 1.0;
-        const REEL_STOP_EASE = "power2.out";
-        const REEL_STOP_STAGGER = 0.2;
-        const BET_AMOUNT = 100; // Ставка для слотів
+        const GameButton = ({ icon, text, onClick }) => (
+            <button
+                onClick={onClick}
+                className="flex flex-col items-center justify-center p-3 m-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95 w-28 h-28 text-sm font-semibold"
+            >
+                <i className={`${icon} text-3xl mb-1`}></i>
+                <span>{text}</span>
+            </button>
+        );
 
         const SlotMachine = () => {
-            const { user, fetchUserData, API_BASE_URL, sendTelegramLog } = useUser();
+            const { user, fetchUserData, loading, error: contextError } = useContext(UserContext);
+            const [symbols, setSymbols] = useState(['?', '?', '?']);
             const [message, setMessage] = useState('');
-            const [messageClass, setMessageClass] = useState('');
             const [isSpinning, setIsSpinning] = useState(false);
-            const reelRefs = [useRef(null), useRef(null), useRef(null)]; // Refs for GSAP animation
-
-            const animateReels = useCallback((finalSymbols) => {
-                return new Promise(resolve => {
-                    const masterTimeline = gsap.timeline({ onComplete: resolve });
-
-                    reelRefs.forEach((reelRef, index) => {
-                        const reelContent = reelRef.current.querySelector('.reel-content');
-                        
-                        const numSpinSymbols = REEL_SPIN_CYCLES * ALL_REEL_SYMBOLS.length;
-                        let animationSymbols = [];
-                        for (let i = 0; i < numSpinSymbols; i++) {
-                            animationSymbols.push(ALL_REEL_SYMBOLS[Math.floor(Math.random() * ALL_REEL_SYMBOLS.length)]);
-                        }
-                        animationSymbols.push(finalSymbols[index]); // Ensure final symbol is at the end
-
-                        reelContent.innerHTML = animationSymbols.map(s => `<div class="reel-symbol">${s}</div>`).join('');
-                        
-                        gsap.set(reelContent, { y: 0 }); // Reset position
-                        reelRef.current.classList.add('spinning'); // Add spinning class
-                        masterTimeline.to(reelContent, {
-                            y: -(animationSymbols.length - 1) * REEL_HEIGHT_PX,
-                            duration: REEL_SPIN_DURATION_BASE + (index * REEL_STOP_STAGGER),
-                            ease: "linear",
-                            onStart: () => {
-                                if (index === 0) playSpinStartSound();
-                            },
-                            onUpdate: function() {
-                                if (this.progress() > 0.1 && this.progress() < 0.95 && Tone.context.state === 'running') {
-                                    playReelStopSound("C4");
-                                }
-                            }
-                        }, 0);
-
-                        masterTimeline.to(reelContent, {
-                            y: -((animationSymbols.length - 1) * REEL_HEIGHT_PX),
-                            duration: REEL_STOP_DURATION,
-                            ease: REEL_STOP_EASE,
-                            overwrite: true,
-                            onComplete: () => {
-                                reelRef.current.classList.remove('spinning');
-                                // Set the exact final symbol
-                                reelContent.innerHTML = `<div class="reel-symbol">${finalSymbols[index]}</div>`;
-                                gsap.set(reelContent, { y: 0 }); // Ensure it snaps to correct position
-                                playReelStopSound("G4");
-                            }
-                        }, `<${index * REEL_STOP_STAGGER}`); // Stagger starts
-                    });
-                });
-            }, [reelRefs]);
+            const [localError, setLocalError] = useState(null);
 
             const handleSpin = async () => {
-                if (!user.userId) {
-                    showCustomModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб грати.', "Недоступно");
-                    return;
-                }
-                if (isSpinning || user.balance < BET_AMOUNT) {
-                    if (user.balance < BET_AMOUNT) {
-                        showCustomModal('Недостатньо фантиків для спіна!', "Низький Баланс");
-                    }
-                    return;
-                }
+                if (isSpinning || loading || user.balance < 100) return; // Basic check, backend will validate
 
                 setIsSpinning(true);
+                setLocalError(null);
                 setMessage('');
-                sendTelegramLog('Spin button clicked, starting spin process.');
+
+                // Simple animation: rapidly change symbols
+                let animationInterval = setInterval(() => {
+                    setSymbols([
+                        ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀', '⭐', '💰'][Math.floor(Math.random() * 9)],
+                        ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀', '⭐', '💰'][Math.floor(Math.random() * 9)],
+                        ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀', '⭐', '💰'][Math.floor(Math.random() * 9)]
+                    ]);
+                }, 100);
 
                 try {
                     const response = await fetch(`${API_BASE_URL}/api/spin`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ user_id: user.userId })
+                        body: JSON.stringify({ user_id: user.userId }),
                     });
 
-                    const data = await response.json();
-
-                    if (response.ok) {
-                        await animateReels(data.symbols); // Animate with actual results
-                        await fetchUserData(); // Update balance and XP from backend
-
-                        if (data.winnings > 0) {
-                            setMessage(`🎉 Ви виграли ${data.winnings} фантиків! 🎉`);
-                            if (data.winnings >= 500) {
-                                setMessageClass('message big-win-message');
-                                playBigWinSoundEffect();
-                            } else {
-                                setMessageClass('message win-message');
-                                playWinSoundEffect();
-                            }
-                            sendTelegramLog(`Win: ${data.winnings} coins.`);
-                        } else {
-                            setMessage('😢 Спробуйте ще раз!');
-                            setMessageClass('message lose-message text-red-400');
-                            playLoseSoundEffect();
-                            sendTelegramLog('Lose on spin.');
-                        }
-                    } else {
-                        showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка сервера.'}`, "Помилка Спіна");
-                        setMessageClass('text-red-500 font-bold');
-                        playLoseSoundEffect();
-                        sendTelegramLog(`Spin API failed: ${data.error || 'Unknown'}`, 'JS_ERROR');
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || 'Помилка спіна.');
                     }
-                } catch (error) {
-                    console.error('Помилка при спіні:', error);
-                    showCustomModal('🚫 Не вдалося зʼєднатись із сервером. Перевірте зʼєднання.', "Помилка");
-                    setMessageClass('text-red-500 font-bold');
-                    playLoseSoundEffect();
-                    sendTelegramLog(`Spin network error: ${error.message}`, 'JS_ERROR');
+
+                    const data = await response.json();
+                    clearInterval(animationInterval); // Stop animation
+                    setSymbols(data.symbols);
+                    setMessage(data.message || (data.winnings > 0 ? `Ви виграли ${data.winnings} фантиків!` : 'Ви програли.'));
+                    fetchUserData(); // Update user data globally
+                    sendTelegramLog(`Slot spin result: Winnings=${data.winnings}, Balance=${data.balance}`, 'JS_LOG');
+                } catch (e) {
+                    clearInterval(animationInterval); // Stop animation on error
+                    setSymbols(['?', '?', '?']); // Reset symbols
+                    setLocalError(e.message);
+                    sendTelegramLog(`Slot spin error: ${e.message}`, 'JS_ERROR');
                 } finally {
                     setIsSpinning(false);
                 }
             };
 
             return (
-                <div className="flex-grow flex flex-col items-center justify-around p-4 md:p-8 w-full">
-                    <h1 className="text-3xl md:text-4xl font-extrabold text-yellow-400 mb-4 drop-shadow-lg leading-tight text-center">
-                        Ігрові Автомати
-                    </h1>
-                    
-                    {/* Slot Machine Reels */}
-                    <div className="slot-machine flex justify-center gap-2 mb-4 w-full max-w-xs md:max-w-sm mx-auto relative px-1 py-3">
-                        <div className="absolute -top-3 left-1/2 transform -translate-x-1/2 w-3/4 h-2 bg-gradient-to-r from-yellow-400 to-red-500 rounded-t-lg shadow-lg"></div>
-                        {/* Reel 1 */}
-                        <div id="reel1" ref={reelRefs[0]} className="reel relative w-24 h-24 md:w-28 md:h-28 rounded-lg bg-gray-800 border-3 border-yellow-500 overflow-hidden shadow-inner transform-gpu">
-                            <div className="reel-content absolute top-0 left-0 w-full h-full"></div>
-                        </div>
-                        {/* Reel 2 */}
-                        <div id="reel2" ref={reelRefs[1]} className="reel relative w-24 h-24 md:w-28 md:h-28 rounded-lg bg-gray-800 border-3 border-yellow-500 overflow-hidden shadow-inner transform-gpu">
-                            <div className="reel-content absolute top-0 left-0 w-full h-full"></div>
-                        </div>
-                        {/* Reel 3 */}
-                        <div id="reel3" ref={reelRefs[2]} className="reel relative w-24 h-24 md:w-28 md:h-28 rounded-lg bg-gray-800 border-3 border-yellow-500 overflow-hidden shadow-inner transform-gpu">
-                            <div className="reel-content absolute top-0 left-0 w-full h-full"></div>
-                        </div>
-                        <div className="absolute -bottom-3 left-1/2 transform -translate-x-1/2 w-3/4 h-2 bg-gradient-to-r from-red-500 to-yellow-400 rounded-b-lg shadow-lg"></div>
+                <div className="w-full max-w-md bg-gray-800 p-6 rounded-xl shadow-lg mb-4 border border-pink-500">
+                    <h3 className="text-xl font-bold text-center text-pink-400 mb-4">Слот-Машина</h3>
+                    <div className="flex justify-around items-center text-5xl mb-6 bg-gray-900 p-4 rounded-lg border border-gray-700">
+                        {symbols.map((s, i) => (
+                            <span key={i} className="slot-symbol animate-bounce-once">{s}</span>
+                        ))}
                     </div>
-
-                    {/* Spin Button */}
-                    <div className="game-controls flex flex-col md:flex-row gap-3 mb-4 w-full max-w-xs md:max-w-sm">
-                        <button 
-                            id="spinButton"
-                            onClick={handleSpin}
-                            disabled={isSpinning || user.balance < BET_AMOUNT}
-                            className={`spin-button bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white font-extrabold py-3 px-6 rounded-full text-lg md:text-xl shadow-xl transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 w-full uppercase tracking-wider flex items-center justify-center ${!isSpinning && user.balance >= BET_AMOUNT ? 'pulsing' : ''}`}
-                        >
-                            Крутити! (Ставка: {BET_AMOUNT})
-                        </button>
-                    </div>
-                    
-                    <div id="message" className={`message text-base md:text-lg font-semibold mt-4 min-h-[30px] flex items-center justify-center text-center w-full max-w-sm ${messageClass}`}>
-                        {message}
-                    </div>
+                    <button
+                        onClick={handleSpin}
+                        disabled={isSpinning || loading || user.balance < 100}
+                        className={`w-full py-3 rounded-xl text-lg font-bold transition-all duration-200 ease-in-out shadow-lg
+                            ${isSpinning || loading || user.balance < 100
+                                ? 'bg-gray-600 cursor-not-allowed'
+                                : 'bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 transform hover:scale-105 active:scale-95'
+                            }`}
+                    >
+                        {isSpinning ? 'Крутиться...' : `Крутити за 100 фантиків`}
+                    </button>
+                    {message && <p className="mt-4 text-center text-green-400 font-semibold">{message}</p>}
+                    {localError && <p className="mt-4 text-center text-red-400 font-semibold">{localError}</p>}
                 </div>
             );
         };
 
-
-        // -----------------------------------------------------------------------------
-        // Coin Flip Game Component (New Game)
-        // -----------------------------------------------------------------------------
-        const COIN_FLIP_BET_AMOUNT = 50; // Ставка для монетки
-
         const CoinFlip = () => {
-            const { user, fetchUserData, API_BASE_URL, sendTelegramLog } = useUser();
+            const { user, fetchUserData, loading, error: contextError } = useContext(UserContext);
+            const [result, setResult] = useState(null);
             const [message, setMessage] = useState('');
-            const [resultCoin, setResultCoin] = useState(''); // 'heads', 'tails', or 'flipping'
             const [isFlipping, setIsFlipping] = useState(false);
-            const [lastChoice, setLastChoice] = useState(null); // To show user's choice
+            const [localError, setLocalError] = useState(null);
 
             const handleFlip = async (choice) => {
-                if (!user.userId) {
-                    showCustomModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб грати.', "Недоступно");
-                    return;
-                }
-                if (isFlipping || user.balance < COIN_FLIP_BET_AMOUNT) {
-                    if (user.balance < COIN_FLIP_BET_AMOUNT) {
-                        showCustomModal('Недостатньо фантиків для підкидання монетки!', "Низький Баланс");
-                    }
-                    return;
-                }
+                if (isFlipping || loading || user.balance < 50) return;
 
                 setIsFlipping(true);
+                setLocalError(null);
                 setMessage('');
-                setResultCoin('flipping'); // Indicate flipping state visually
-                setLastChoice(choice);
-                playCoinFlipSound();
-                sendTelegramLog(`Coin Flip: User chose ${choice}, starting flip.`);
+                setResult(null);
 
                 try {
                     const response = await fetch(`${API_BASE_URL}/api/coin_flip`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ user_id: user.userId, choice: choice })
+                        body: JSON.stringify({ user_id: user.userId, choice }),
                     });
 
-                    const data = await response.json();
-
-                    if (response.ok) {
-                        // Simulate flip animation time
-                        await new Promise(resolve => setTimeout(resolve, 1500)); 
-
-                        setResultCoin(data.result); // 'heads' or 'tails' from backend
-                        setMessage(data.message); // Win/lose message from backend
-                        await fetchUserData(); // Update balance and XP from backend
-                        sendTelegramLog(`Coin Flip Result: ${data.result}, Winnings: ${data.winnings}`);
-                    } else {
-                        showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка сервера.'}`, "Помилка Підкидання");
-                        sendTelegramLog(`Coin Flip API failed: ${data.error || 'Unknown'}`, 'JS_ERROR');
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || 'Помилка підкидання монетки.');
                     }
-                } catch (error) {
-                    console.error('Помилка при підкиданні монетки:', error);
-                    showCustomModal('🚫 Не вдалося зʼєднатись із сервером. Перевірте зʼєднання.', "Помилка");
-                    sendTelegramLog(`Coin Flip network error: ${error.message}`, 'JS_ERROR');
+
+                    const data = await response.json();
+                    setResult(data.result); // 'heads' or 'tails'
+                    setMessage(data.message);
+                    fetchUserData();
+                    sendTelegramLog(`Coin flip result: ${data.result}, Winnings: ${data.winnings}`, 'JS_LOG');
+                } catch (e) {
+                    setLocalError(e.message);
+                    sendTelegramLog(`Coin flip error: ${e.message}`, 'JS_ERROR');
                 } finally {
                     setIsFlipping(false);
                 }
             };
 
-            const getCoinImage = (result) => {
-                if (result === 'heads') {
-                    return (
-                        <svg className="w-full h-full" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="50" cy="50" r="48" fill="#FFD700" stroke="#DAA520" strokeWidth="2"/>
-                            <path d="M50 20C35 20 25 35 25 50C25 65 35 80 50 80C65 80 75 65 75 50C75 35 65 20 50 20ZM50 30C58.2843 30 65 36.7157 65 45H50V30ZM50 70C41.7157 70 35 63.2843 35 55H50V70Z" fill="#8B4513"/>
-                            <text x="50" y="55" fontFamily="Arial" fontSize="20" fontWeight="bold" fill="#F5F5DC" textAnchor="middle">ОРЕЛ</text>
-                        </svg>
-                    );
-                } else if (result === 'tails') {
-                    return (
-                        <svg className="w-full h-full" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <circle cx="50" cy="50" r="48" fill="#C0C0C0" stroke="#A9A9A9" strokeWidth="2"/>
-                            <path d="M50 20C35 20 25 35 25 50C25 65 35 80 50 80C65 80 75 65 75 50C75 35 65 20 50 20ZM50 30C58.2843 30 65 36.7157 65 45H50V30ZM50 70C41.7157 70 35 63.2843 35 55H50V70Z" fill="#2F4F4F"/>
-                            <text x="50" y="55" fontFamily="Arial" fontSize="20" fontWeight="bold" fill="#F5F5DC" textAnchor="middle">РЕШКА</text>
-                        </svg>
-                    );
-                }
-                return (
-                    <svg className="w-full h-full" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-                        <circle cx="50" cy="50" r="48" fill="#FFD700" stroke="#DAA520" strokeWidth="2"/>
-                        <text x="50" y="58" fontFamily="Arial" fontSize="40" fontWeight="bold" fill="#8B4513" textAnchor="middle">?</text>
-                    </svg>
-                );
-            };
-
-
             return (
-                <div className="flex-grow flex flex-col items-center justify-around p-4 md:p-8 w-full">
-                    {/* Removed H1 "Підкидання Монетки" */}
-
-                    <div className="coin-flip-area flex flex-col items-center mb-6">
-                        <div className={`coin-display transition-transform duration-500 ease-out ${isFlipping ? 'animate-spin-3d' : ''}`}>
-                            {getCoinImage(resultCoin)}
-                        </div>
-                        {/* Show message from backend after flip */}
-                        {!isFlipping && message && (
-                            <p className={`message text-gray-300 text-lg mt-2 text-center font-bold ${message.includes('Вітаємо') ? 'text-green-400' : 'text-red-400'}`}>
-                                {message}
-                            </p>
+                <div className="w-full max-w-md bg-gray-800 p-6 rounded-xl shadow-lg mb-4 border border-blue-500">
+                    <h3 className="text-xl font-bold text-center text-blue-400 mb-4">Підкидання Монетки</h3>
+                    <div className="flex justify-center items-center text-6xl mb-6 h-20">
+                        {isFlipping ? (
+                            <i className="fas fa-sync fa-spin text-gray-400"></i> // Spinner icon
+                        ) : (
+                            result === 'heads' ? '🪙' : (result === 'tails' ? '🪙' : '❓') // Coin emoji for heads/tails
                         )}
-                        {/* Show user's choice while flipping or before result, if no message */}
-                        {isFlipping && lastChoice && <p className="text-gray-300 text-lg mt-2">Ваш вибір: {lastChoice === 'heads' ? 'Орел' : 'Решка'}</p>}
-                        {!isFlipping && !message && lastChoice && <p className="text-gray-300 text-lg mt-2">Ви обрали: {lastChoice === 'heads' ? 'Орел' : 'Решка'}</p>}
-
                     </div>
-
-                    <div className="game-controls flex flex-col md:flex-row gap-3 mb-4 w-full max-w-xs md:max-w-sm">
+                    <div className="flex justify-around gap-4 mb-4">
                         <button
                             onClick={() => handleFlip('heads')}
-                            disabled={isFlipping || user.balance < COIN_FLIP_BET_AMOUNT}
-                            className="spin-button bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-extrabold py-3 px-6 rounded-full text-lg md:text-xl shadow-xl transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 w-full uppercase tracking-wider flex items-center justify-center"
+                            disabled={isFlipping || loading || user.balance < 50}
+                            className={`flex-1 py-3 rounded-xl text-lg font-bold transition-all duration-200 ease-in-out shadow-lg
+                                ${isFlipping || loading || user.balance < 50
+                                    ? 'bg-gray-600 cursor-not-allowed'
+                                    : 'bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 transform hover:scale-105 active:scale-95'
+                                }`}
                         >
-                            Орел (Ставка: {COIN_FLIP_BET_AMOUNT})
+                            Орел
                         </button>
                         <button
                             onClick={() => handleFlip('tails')}
-                            disabled={isFlipping || user.balance < COIN_FLIP_BET_AMOUNT}
-                            className="spin-button bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 text-white font-extrabold py-3 px-6 rounded-full text-lg md:text-xl shadow-xl transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 w-full uppercase tracking-wider flex items-center justify-center mt-3 md:mt-0"
+                            disabled={isFlipping || loading || user.balance < 50}
+                            className={`flex-1 py-3 rounded-xl text-lg font-bold transition-all duration-200 ease-in-out shadow-lg
+                                ${isFlipping || loading || user.balance < 50
+                                    ? 'bg-gray-600 cursor-not-allowed'
+                                    : 'bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 transform hover:scale-105 active:scale-95'
+                                }`}
                         >
-                            Решка (Ставка: {COIN_FLIP_BET_AMOUNT})
+                            Решка
                         </button>
                     </div>
+                    <p className="text-center text-sm text-gray-300 mb-4">Вартість: 50 фантиків</p>
+                    {message && <p className="mt-4 text-center text-green-400 font-semibold">{message}</p>}
+                    {localError && <p className="mt-4 text-center text-red-400 font-semibold">{localError}</p>}
                 </div>
             );
         };
 
+        const BonusClaimer = () => {
+            const { user, fetchUserData, loading, error: contextError } = useContext(UserContext);
+            const [dailyMessage, setDailyMessage] = useState('');
+            const [quickMessage, setQuickMessage] = useState('');
+            const [dailyError, setDailyError] = useState(null);
+            const [quickError, setQuickError] = useState(null);
 
-        // -----------------------------------------------------------------------------
-        // Leaderboard Component
-        // -----------------------------------------------------------------------------
-        const Leaderboard = () => {
-            const { API_BASE_URL, sendTelegramLog } = useUser();
-            const [leaderboardData, setLeaderboardData] = useState([]);
-            const [loading, setLoading] = useState(true);
-            const [error, setError] = useState(null);
+            const calculateTimeLeft = (lastClaim, cooldownHours, cooldownMinutes = 0) => {
+                if (!lastClaim) return { hours: 0, minutes: 0, seconds: 0, available: true };
 
-            const fetchLeaderboard = useCallback(async () => {
-                setLoading(true);
+                const lastClaimDate = new Date(lastClaim);
+                const cooldownDurationMs = (cooldownHours * 3600 + cooldownMinutes * 60) * 1000;
+                const nextClaimTime = lastClaimDate.getTime() + cooldownDurationMs;
+                const now = Date.now();
+                const timeLeftMs = nextClaimTime - now;
+
+                if (timeLeftMs <= 0) return { hours: 0, minutes: 0, seconds: 0, available: true };
+
+                const hours = Math.floor(timeLeftMs / (1000 * 60 * 60));
+                const minutes = Math.floor((timeLeftMs % (1000 * 60 * 60)) / (1000 * 60));
+                const seconds = Math.floor((timeLeftMs % (1000 * 60)) / 1000);
+                return { hours, minutes, seconds, available: false };
+            };
+
+            const dailyBonusTimeLeft = calculateTimeLeft(user.lastDailyBonusClaim, 24);
+            const quickBonusTimeLeft = calculateTimeLeft(user.lastQuickBonusClaim, 0, 15);
+
+            const handleClaimBonus = async (type) => {
+                const endpoint = type === 'daily' ? 'claim_daily_bonus' : 'claim_quick_bonus';
+                const setMessage = type === 'daily' ? setDailyMessage : setQuickMessage;
+                const setError = type === 'daily' ? setDailyError : setQuickError;
+
+                setMessage('');
                 setError(null);
-                sendTelegramLog('Fetching leaderboard data...');
+
                 try {
-                    const response = await fetch(`${API_BASE_URL}/api/get_leaderboard`, {
+                    const response = await fetch(`${API_BASE_URL}/api/${endpoint}`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({})
+                        body: JSON.stringify({ user_id: user.userId }),
                     });
 
                     if (!response.ok) {
-                        const errData = await response.json();
-                        sendTelegramLog(`Leaderboard API error: ${errData.error || 'Unknown'}`, 'JS_ERROR');
-                        throw new Error(errData.error || 'Failed to fetch leaderboard data');
+                        const errorData = await response.json();
+                        throw new Error(errorData.detail || 'Помилка отримання бонусу.');
                     }
 
                     const data = await response.json();
-                    sendTelegramLog(`Leaderboard data received, count: ${data.leaderboard ? data.leaderboard.length : 0}`);
-                    
-                    // Sorting is handled by backend query (ORDER BY level DESC, xp DESC)
-                    setLeaderboardData(data.leaderboard || []);
-
-                } catch (err) {
-                    console.error('Error fetching leaderboard:', err);
-                    setError(err.message || 'Помилка завантаження дошки лідерів.');
-                    sendTelegramLog(`Leaderboard network error: ${err.message}`, 'JS_ERROR');
-                } finally {
-                    setLoading(false);
+                    setMessage(`Ви отримали ${data.amount} фантиків!`);
+                    fetchUserData(); // Update user data globally
+                    sendTelegramLog(`Claimed ${type} bonus. Amount: ${data.amount}`, 'JS_LOG');
+                } catch (e) {
+                    setError(e.message);
+                    sendTelegramLog(`Error claiming ${type} bonus: ${e.message}`, 'JS_ERROR');
                 }
-            }, [API_BASE_URL, sendTelegramLog]);
+            };
 
+            // Update timers every second
             useEffect(() => {
-                fetchLeaderboard();
-            }, [fetchLeaderboard]);
+                const interval = setInterval(() => {
+                    fetchUserData(); // Re-fetch all user data to update timers
+                }, 1000);
+                return () => clearInterval(interval);
+            }, [fetchUserData]);
+
 
             return (
-                <div className="flex-grow flex flex-col items-center justify-start p-4 md:p-8 w-full">
-                    <h2 className="text-3xl font-extrabold text-yellow-400 mb-6">👑 Дошка Лідерів 👑</h2>
-                    <div id="leaderboardTableContainer" className="overflow-x-auto w-full max-w-lg bg-gray-800 rounded-xl shadow-2xl p-4 border-2 border-yellow-400">
-                        {loading && <p className="text-yellow-300 mt-4 text-center">Завантаження...</p>}
-                        {error && <p className="text-red-500 mt-4 text-center">{error}</p>}
-                        {!loading && !error && leaderboardData.length === 0 && (
-                            <p className="py-4 text-center text-gray-400">Наразі немає лідерів. Будь першим!</p>
-                        )}
-                        {!loading && !error && leaderboardData.length > 0 && (
-                            <table className="w-full text-left text-sm md:text-base text-gray-300">
-                                <thead className="text-xs md:text-sm text-gray-100 uppercase bg-gray-700">
-                                    <tr>
-                                        <th scope="col" className="py-2 px-3">#</th>
-                                        <th scope="col" className="py-2 px-3">Ім'я</th>
-                                        {/* Show Level and XP instead of Balance, as it's more relevant for ranking */}
-                                        <th scope="col" className="py-2 px-3 text-right">Рівень</th>
-                                        <th scope="col" className="py-2 px-3 text-right">XP</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {leaderboardData.map((player, index) => (
-                                        <tr key={index} className={(index % 2 === 0) ? 'bg-gray-800' : 'bg-gray-700'}>
-                                            <td className="py-2 px-3 font-bold">{index + 1}</td>
-                                            <td className="py-2 px-3">{player.username}</td>
-                                            <td className="py-2 px-3 text-right">{player.level}</td>
-                                            <td className="py-2 px-3 text-right">{player.xp}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        )}
+                <div className="w-full max-w-md bg-gray-800 p-6 rounded-xl shadow-lg mb-4 border border-orange-500">
+                    <h3 className="text-xl font-bold text-center text-orange-400 mb-4">Бонуси</h3>
+                    <div className="mb-4">
+                        <button
+                            onClick={() => handleClaimBonus('daily')}
+                            disabled={!dailyBonusTimeLeft.available || loading}
+                            className={`w-full py-3 rounded-xl text-lg font-bold transition-all duration-200 ease-in-out shadow-lg mb-2
+                                ${!dailyBonusTimeLeft.available || loading
+                                    ? 'bg-gray-600 cursor-not-allowed'
+                                    : 'bg-gradient-to-r from-yellow-500 to-orange-600 hover:from-yellow-600 hover:to-orange-700 transform hover:scale-105 active:scale-95'
+                                }`}
+                        >
+                            Щоденна Винагорода ({dailyBonusTimeLeft.available ? 'Доступно' : `${dailyBonusTimeLeft.hours} год ${dailyBonusTimeLeft.minutes} хв`})
+                        </button>
+                        {dailyMessage && <p className="text-center text-green-400 text-sm">{dailyMessage}</p>}
+                        {dailyError && <p className="text-center text-red-400 text-sm">{dailyError}</p>}
+                    </div>
+                    <div>
+                        <button
+                            onClick={() => handleClaimBonus('quick')}
+                            disabled={!quickBonusTimeLeft.available || loading}
+                            className={`w-full py-3 rounded-xl text-lg font-bold transition-all duration-200 ease-in-out shadow-lg
+                                ${!quickBonusTimeLeft.available || loading
+                                    ? 'bg-gray-600 cursor-not-allowed'
+                                    : 'bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700 transform hover:scale-105 active:scale-95'
+                                }`}
+                        >
+                            Швидкий Бонус ({quickBonusTimeLeft.available ? 'Доступно' : `${quickBonusTimeLeft.minutes} хв ${quickBonusTimeLeft.seconds} сек`})
+                        </button>
+                        {quickMessage && <p className="mt-2 text-center text-green-400 text-sm">{quickMessage}</p>}
+                        {quickError && <p className="mt-2 text-center text-red-400 text-sm">{quickError}</p>}
                     </div>
                 </div>
             );
         };
-
-        // -----------------------------------------------------------------------------
-        // Blackjack Game Component (Multiplayer)
-        // -----------------------------------------------------------------------------
-        const BLACKJACK_BET_AMOUNT = 200; // Fixed bet amount for Blackjack
 
         const BlackjackGame = () => {
-            // Now get blackjack state and send function from context
-            const { user, sendTelegramLog, blackjackRoomState, blackjackGameMessage, sendWsMessage, setBlackjackGameMessage, connectBlackjackWebSocket } = useUser();
-            const [betInput, setBetInput] = useState(BLACKJACK_BET_AMOUNT);
-            const [showBetModal, setShowBetModal] = useState(false);
-            // Local state for timer to avoid re-rendering the whole component
-            const [localTimer, setLocalTimer] = useState(0); 
+            const { user, sendWsMessage, error: contextError, fetchUserData } = useContext(UserContext);
+            const [betAmount, setBetAmount] = useState(100); // Default bet
+            const [localError, setLocalError] = useState(null);
 
-            // Effect to connect to WebSocket and request state when component mounts
-            useEffect(() => {
-                if (user.userId) {
-                    sendTelegramLog('BlackjackGame component mounted. Attempting to connect WS and request state.');
-                    connectBlackjackWebSocket(); // Connect only when Blackjack game is active
-                    // Request state after a short delay to ensure connection is established
-                    const timeoutId = setTimeout(() => {
-                        sendWsMessage("request_state");
-                    }, 500); // Give some time for WS to open
-                    return () => clearTimeout(timeoutId); // Cleanup timeout
-                }
-            }, [user.userId, connectBlackjackWebSocket, sendWsMessage, sendTelegramLog]);
+            const playersInRoom = user.blackjackPlayers;
+            const currentPlayerTurn = user.blackjackCurrentPlayerTurn;
+            const isMyTurn = currentPlayerTurn === user.userId;
+            const myPlayerState = playersInRoom.find(p => p.user_id === user.userId);
+            const isPlayerActive = myPlayerState?.is_playing;
+            const hasPlayerBet = myPlayerState?.has_bet;
 
-
-            // Effect to update local timer based on blackjackRoomState.status
-            useEffect(() => {
-                let timerInterval;
-                if (blackjackRoomState.status === "starting_timer" && blackjackRoomState.timer > 0) {
-                    setLocalTimer(blackjackRoomState.timer); // Set initial local timer from backend
-                    timerInterval = setInterval(() => {
-                        setLocalTimer(prevTimer => {
-                            if (prevTimer <= 1) {
-                                clearInterval(timerInterval);
-                                return 0;
-                            }
-                            return prevTimer - 1;
-                        });
-                    }, 1000);
-                } else {
-                    setLocalTimer(0); // Reset timer if not in starting_timer state
-                }
-                return () => clearInterval(timerInterval); // Cleanup interval on unmount or status change
-            }, [blackjackRoomState.status, blackjackRoomState.timer]); // Depend on backend timer for initial sync
-
-            const getCardDisplay = (card) => {
-                if (card === "Hidden") return "🂠"; // Card back
-                const rank = card.slice(0, -1);
-                const suit = card.slice(-1);
-                let colorClass = '';
-                if (suit === '♥' || suit === '♦') {
-                    colorClass = 'text-red-600'; // Red for hearts/diamonds
-                } else {
-                    colorClass = 'text-gray-900'; // Black for spades/clubs
-                }
-                return (
-                    <div className={`card ${colorClass}`}>
-                        <span className="card-rank">{rank}</span>
-                        <span className="card-suit">{suit}</span>
-                    </div>
-                );
-            };
-            
-            const renderPlayerHand = (player) => {
-                const isCurrentPlayer = player.user_id === user.userId;
-                return (
-                    <div key={player.user_id} className={`player-card-container ${blackjackRoomState.current_player_turn === player.user_id ? 'current-turn-highlight' : ''}`}>
-                        <p className="player-username font-bold text-lg mb-1">{player.username} {isCurrentPlayer ? "(Ви)" : ""}</p>
-                        <div className="flex flex-wrap justify-center gap-1 mb-1">
-                            {player.hand.map((cardStr, idx) => (
-                                <div key={idx} className="card-item relative">{getCardDisplay(cardStr)}</div>
-                            ))}
-                        </div>
-                        <p className="text-sm">Рахунок: {player.score} | Ставка: {player.bet}</p>
-                        {blackjackRoomState.status === "betting" && !player.has_bet && isCurrentPlayer && (
-                            <p className="text-yellow-300 text-sm animate-pulse">Зробіть ставку!</p>
-                        )}
-                        {/* New message for players not playing this round */}
-                        {blackjackRoomState.status !== "betting" && !player.is_playing && player.user_id === user.userId && (
-                            <p className="text-red-400 text-sm mt-1">Ви не берете участь у цьому раунді.</p>
-                        )}
-                    </div>
-                );
-            };
-
-            // Determine if the "Make Bet" button should be active for the current user
-            const canMakeBet = blackjackRoomState.status === "betting" && user.balance >= BLACKJACK_BET_AMOUNT && blackjackRoomState.players.some(p => p.user_id === user.userId && !p.has_bet);
-            const canHitStand = blackjackRoomState.status === "playing" && blackjackRoomState.current_player_turn === user.userId;
-            const isWaitingForOthersToBet = blackjackRoomState.status === "betting" && blackjackRoomState.players.some(p => p.user_id === user.userId && p.has_bet) && !allPlayersHaveBet();
-
-            const allPlayersHaveBet = () => {
-                if (blackjackRoomState.players.length === 0) return false;
-                // Consider a player as "finished betting" if they have bet OR they are not playing this round
-                return blackjackRoomState.players.every(p => p.has_bet || !p.is_playing);
-            };
-
-
-            return (
-                <div className="blackjack-game flex-grow flex flex-col items-center justify-between p-4 md:p-8 w-full">
-                    <h1 className="text-3xl md:text-4xl font-extrabold text-yellow-400 mb-4 drop-shadow-lg leading-tight text-center">
-                        ♦️ Блекджек ♦️
-                    </h1>
-                    
-                    <div className="game-status-message-box bg-gray-700 p-3 rounded-lg w-full max-w-lg text-center shadow-lg mb-4 border border-yellow-500">
-                        <p className="text-xl font-bold text-yellow-300">{blackjackGameMessage}</p>
-                    </div>
-
-                    {/* Timer display for starting game - now uses localTimer */}
-                    {blackjackRoomState.status === "starting_timer" && localTimer > 0 && (
-                        <div className="text-4xl font-extrabold text-red-500 mb-4 animate-pulse-fast">
-                            {localTimer}
-                        </div>
-                    )}
-
-                    {/* Removed Dealer's Hand area completely */}
-
-                    {/* Players' Hands */}
-                    <div className="players-area flex-grow w-full max-w-lg overflow-y-auto p-2 bg-gray-900 rounded-xl shadow-inner border border-gray-700">
-                        {blackjackRoomState.players.length === 0 ? (
-                            <p className="text-center text-gray-400 mt-4">Очікування гравців...</p>
-                        ) : (
-                            blackjackRoomState.players.map(renderPlayerHand)
-                        )}
-                    </div>
-                    
-                    {/* Game Controls */}
-                    <div className="game-controls flex flex-col md:flex-row gap-3 mt-4 w-full max-w-xs md:max-w-md">
-                        {blackjackRoomState.status === "betting" && (
-                            <>
-                                <button
-                                    onClick={() => setShowBetModal(true)}
-                                    disabled={!canMakeBet || isWaitingForOthersToBet}
-                                    className="spin-button bg-gradient-to-r from-green-500 to-emerald-600 text-white py-3 px-6 rounded-full text-lg shadow-xl transition-all duration-300 transform hover:scale-105 active:scale-95 w-full uppercase"
-                                >
-                                    Зробити ставку ({BLACKJACK_BET_AMOUNT})
-                                </button>
-                                {isWaitingForOthersToBet && (
-                                    <p className="text-gray-400 text-center text-sm mt-2">Очікуємо інших гравців...</p>
-                                )}
-                            </>
-                        )}
-
-                        {blackjackRoomState.status === "playing" && blackjackRoomState.current_player_turn === user.userId && (
-                            <>
-                                <button
-                                    onClick={() => sendWsMessage("hit")}
-                                    disabled={!canHitStand}
-                                    className="spin-button bg-gradient-to-r from-blue-500 to-indigo-600 text-white py-3 px-6 rounded-full text-lg shadow-xl transition-all duration-300 transform hover:scale-105 active:scale-95 w-full uppercase"
-                                >
-                                    Взяти карту (Hit)
-                                </button>
-                                <button
-                                    onClick={() => sendWsMessage("stand")}
-                                    disabled={!canHitStand}
-                                    className="spin-button bg-gradient-to-r from-red-500 to-orange-600 text-white py-3 px-6 rounded-full text-lg shadow-xl transition-all duration-300 transform hover:scale-105 active:scale-95 w-full uppercase"
-                                >
-                                    Зупинитись (Stand)
-                                </button>
-                            </>
-                        )}
-                        {blackjackRoomState.status === "round_end" && (
-                            <p className="text-center text-yellow-300 font-semibold text-lg">
-                                Новий раунд незабаром...
-                            </p>
-                        )}
-                    </div>
-                    {/* Bet Input Modal - if we wanted variable bets */}
-                    {showBetModal && (
-                        <div className="modal fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-70 active">
-                            <div className="modal-content bg-gray-800 rounded-xl shadow-2xl p-6 md:p-8 text-center w-11/12 max-w-sm relative border-2 border-yellow-400">
-                                <button className="close-button absolute top-2 right-4 text-gray-400 hover:text-white text-3xl font-bold transition-colors duration-200" onClick={() => setShowBetModal(false)}>&times;</button>
-                                <h3 className="text-xl font-bold mb-4">Зробити Ставку</h3>
-                                <p className="mb-4">Ваша поточна ставка: {BLACKJACK_BET_AMOUNT} фантиків.</p>
-                                <button 
-                                    onClick={() => { 
-                                        sendWsMessage("bet", { amount: BLACKJACK_BET_AMOUNT }); 
-                                        setShowBetModal(false); 
-                                    }}
-                                    className="bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold py-2 px-6 rounded-full text-lg shadow-md transition-all duration-300"
-                                >
-                                    Підтвердити ставку
-                                </button>
-                                <button
-                                    onClick={() => setShowBetModal(false)}
-                                    className="bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-6 rounded-full text-lg shadow-md transition-all duration-300 mt-2 ml-2"
-                                >
-                                    Скасувати
-                                </button>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            );
-        };
-
-
-        // -----------------------------------------------------------------------------
-        // Placeholder Game Components
-        // -----------------------------------------------------------------------------
-        const GamePlaceholder = ({ gameName, icon }) => {
-            const { sendTelegramLog } = useUser();
-            useEffect(() => {
-                sendTelegramLog(`Navigated to placeholder game: ${gameName}`);
-            }, [gameName, sendTelegramLog]);
-
-            return (
-                <div className="flex-grow flex flex-col items-center justify-center p-4 md:p-8 w-full">
-                    <h1 className="text-4xl md:text-5xl font-extrabold text-yellow-400 mb-6 drop-shadow-lg leading-tight text-center">
-                        {icon} {gameName} {icon}
-                    </h1>
-                    <p className="text-xl md:text-2xl text-gray-300 text-center max-w-md">
-                        Ця гра зараз у розробці. Слідкуйте за оновленнями!
-                    </p>
-                    <p className="mt-4 text-md text-gray-400">
-                        Дякуємо за терпіння!
-                    </p>
-                </div>
-            );
-        };
-
-
-        // -----------------------------------------------------------------------------
-        // Top Header Component (Balance, XP, Level, Bonuses)
-        // -----------------------------------------------------------------------------
-        const TopHeader = () => { 
-            const { user, fetchUserData, API_BASE_URL, sendTelegramLog } = useUser();
-            const [dailyBonusCooldownText, setDailyBonusCooldownText] = useState('');
-            const [quickBonusCooldownText, setQuickBonusCooldownText] = useState('');
-
-            // Helper for time formatting
-            const formatTime = (ms) => {
-                const totalSeconds = Math.floor(ms / 1000);
-                const hours = Math.floor(totalSeconds / 3600);
-                const minutes = Math.floor((totalSeconds % 3600) / 60);
-                const seconds = totalSeconds % 60;
-                
-                if (hours > 0) {
-                    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-                } else {
-                    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-                }
-            };
-
-            // Daily Bonus Logic
-            const updateDailyBonusCountdown = useCallback(() => {
-                const now = new Date();
-                const cooldownDuration = 24 * 60 * 60 * 1000; // 24 hours in ms
-                
-                const dailyBonusButtonElement = document.getElementById('dailyBonusButton'); // Access via DOM
-                if (!dailyBonusButtonElement) return;
-
-                if (!user.lastDailyBonusClaim || (now.getTime() - user.lastDailyBonusClaim.getTime()) >= cooldownDuration) {
-                    setDailyBonusCooldownText('');
-                    dailyBonusButtonElement.disabled = false;
-                    dailyBonusButtonElement.classList.add('pulsing');
-                } else {
-                    const timeLeft = cooldownDuration - (now.getTime() - user.lastDailyBonusClaim.getTime());
-                    setDailyBonusCooldownText(`(${formatTime(timeLeft)})`);
-                    dailyBonusButtonElement.disabled = true;
-                    dailyBonusButtonElement.classList.remove('pulsing');
-                }
-            }, [user.lastDailyBonusClaim]);
-
-            useEffect(() => {
-                const interval = setInterval(updateDailyBonusCountdown, 1000);
-                updateDailyBonusCountdown(); // Initial call
-                return () => clearInterval(interval);
-            }, [updateDailyBonusCountdown]);
-
-            const handleClaimDailyBonus = async () => {
-                if (!user.userId) {
-                    showCustomModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб отримати User ID.', "Недоступно");
+            const handleBet = () => {
+                if (user.blackjackStatus !== 'betting' || hasPlayerBet) {
+                    setLocalError('Зараз не можна робити ставки або ви вже поставили.');
+                    setTimeout(() => setLocalError(null), 3000);
                     return;
                 }
-                const dailyBonusButtonElement = document.getElementById('dailyBonusButton');
-                if (dailyBonusButtonElement && dailyBonusButtonElement.disabled) return;
-
-                if(dailyBonusButtonElement) {
-                    dailyBonusButtonElement.disabled = true;
-                    dailyBonusButtonElement.classList.remove('pulsing');
-                }
-                sendTelegramLog('Attempting to claim daily bonus...');
-
-                try {
-                    const response = await fetch(`${API_BASE_URL}/api/claim_daily_bonus`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ user_id: user.userId })
-                    });
-
-                    const data = await response.json();
-
-                    if (response.ok) {
-                        playDailyBonusSound();
-                        showCustomModal(`🎉 Ви отримали ${data.amount} фантиків!`, "Щоденна Винагорода!");
-                        fetchUserData();
-                        sendTelegramLog(`Daily Bonus claimed: ${data.amount}`);
-                    } else {
-                        showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка.'}`, "Помилка Винагороди");
-                        fetchUserData(); // Fetch updated data to refresh cooldown
-                        sendTelegramLog(`Daily Bonus API failed: ${data.error || 'Unknown'}`, 'JS_ERROR');
-                    }
-                } catch (error) {
-                    console.error('Помилка при отриманні щоденної винагороди:', error);
-                    showCustomModal('🚫 Не вдалося зʼєднатись із сервером для винагороди.', "Помилка");
-                    if(dailyBonusButtonElement) {
-                        dailyBonusButtonElement.disabled = false;
-                        dailyBonusButtonElement.classList.add('pulsing');
-                    }
-                    sendTelegramLog(`Daily Bonus network error: ${error.message}`, 'JS_ERROR');
-                }
-            };
-
-            // Quick Bonus Logic
-            const updateQuickBonusCountdown = useCallback(() => {
-                const now = new Date();
-                const cooldownDuration = 15 * 60 * 1000; // 15 minutes in ms
-                
-                const quickBonusButtonElement = document.getElementById('quickBonusButton');
-                const quickBonusCooldownElement = document.getElementById('quickBonusCooldown');
-                if (!quickBonusButtonElement || !quickBonusCooldownElement) return;
-
-
-                if (!user.lastQuickBonusClaim || (now.getTime() - user.lastQuickBonusClaim.getTime()) >= cooldownDuration) {
-                    setQuickBonusCooldownText('');
-                    quickBonusButtonElement.disabled = false;
-                    quickBonusButtonElement.classList.add('pulsing');
-                    quickBonusButtonElement.classList.remove('active-countdown'); // Hide timer
-                } else {
-                    const timeLeft = cooldownDuration - (now.getTime() - user.lastQuickBonusClaim.getTime());
-                    setQuickBonusCooldownText(formatTime(timeLeft));
-                    quickBonusButtonElement.disabled = true;
-                    quickBonusButtonElement.classList.remove('pulsing');
-                    quickBonusButtonElement.classList.add('active-countdown'); // Show timer
-                }
-            }, [user.lastQuickBonusClaim]);
-
-            useEffect(() => {
-                const interval = setInterval(updateQuickBonusCountdown, 1000);
-                updateQuickBonusCountdown(); // Initial call
-                return () => clearInterval(interval);
-            }, [updateQuickBonusCountdown]);
-
-            const handleClaimQuickBonus = async () => {
-                if (!user.userId) {
-                    showCustomModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб отримати User ID.', "Недоступно");
+                if (betAmount <= 0 || betAmount > user.balance) {
+                    setLocalError('Невірна сума ставки або недостатньо фантиків.');
+                    setTimeout(() => setLocalError(null), 3000);
                     return;
                 }
-                const quickBonusButtonElement = document.getElementById('quickBonusButton');
-                if (quickBonusButtonElement && quickBonusButtonElement.disabled) return;
+                sendWsMessage("bet", { amount: betAmount });
+                setLocalError(null); // Clear previous errors
+            };
 
-                if(quickBonusButtonElement) {
-                    quickBonusButtonElement.disabled = true;
-                    quickBonusButtonElement.classList.remove('pulsing');
-                    quickBonusButtonElement.classList.remove('active-countdown');
-                    setQuickBonusCooldownText('');
+            const handleAction = (action) => {
+                if (user.blackjackStatus !== 'playing' || !isMyTurn || !isPlayerActive) {
+                    setLocalError('Зараз не ваш хід або ви не берете участь у раунді.');
+                    setTimeout(() => setLocalError(null), 3000);
+                    return;
                 }
-                sendTelegramLog('Attempting to claim quick bonus...');
+                sendWsMessage(action);
+                setLocalError(null); // Clear previous errors
+            };
 
-                try {
-                    const response = await fetch(`${API_BASE_URL}/api/claim_quick_bonus`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ user_id: user.userId })
-                    });
-
-                    const data = await response.json();
-
-                    if (response.ok) {
-                        playQuickBonusSound();
-                        showCustomModal(`💰 Ви отримали ${data.amount} фантиків!`, "Швидкий Бонус!");
-                        fetchUserData();
-                        sendTelegramLog(`Quick Bonus claimed: ${data.amount}`);
-                    } else {
-                        showCustomModal(`❌ Помилка: ${data.error || 'Невідома помилка.'}`, "Помилка Бонусу");
-                        fetchUserData(); // Fetch updated data to refresh cooldown
-                        sendTelegramLog(`Quick Bonus API failed: ${data.error || 'Unknown'}`, 'JS_ERROR');
-                    }
-                } catch (error) {
-                    console.error('Помилка при отриманні швидкого бонусу:', error);
-                    showCustomModal('🚫 Не вдалося зʼєднатись із сервером для швидкого бонусу.', "Помилка");
-                    if(quickBonusButtonElement) {
-                        quickBonusButtonElement.disabled = false;
-                        quickBonusButtonElement.classList.add('pulsing');
-                    }
-                    sendTelegramLog(`Quick Bonus network error: ${error.message}`, 'JS_ERROR');
+            const getStatusMessage = () => {
+                switch (user.blackjackStatus) {
+                    case 'waiting':
+                        return `Очікування гравців (${user.blackjackPlayers.length}/${user.min_players})...`;
+                    case 'starting_timer':
+                        return `Гра почнеться через ${user.blackjackTimer} сек.`;
+                    case 'betting':
+                        return `Робіть ставки! Залишилось ${user.blackjackTimer} сек.`;
+                    case 'playing':
+                        if (isMyTurn) {
+                            return `Ваш хід! Залишилось ${user.blackjackTimer} сек.`;
+                        } else {
+                            const currentTurnPlayer = playersInRoom.find(p => p.user_id === currentPlayerTurn);
+                            return `Хід гравця ${currentTurnPlayer?.username || '...'}.`;
+                        }
+                    case 'round_end':
+                        return `Раунд завершено. Результати...`;
+                    case 'disconnected':
+                        return `Відключено від гри. Спробуйте оновити.`;
+                    default:
+                        return `Статус: ${user.blackjackStatus}`;
                 }
             };
 
+            // Update user balance/xp after round end, if not already handled by round_result message
+            useEffect(() => {
+                if (user.blackjackStatus === 'round_end') {
+                    fetchUserData(); // Ensure balance/xp is updated from DB
+                }
+            }, [user.blackjackStatus, fetchUserData]);
 
-            const xpProgress = Math.min(100, (user.xp / user.nextLevelXp) * 100);
-
-            return (
-                <div className="app-header w-full h-16 bg-gradient-to-b from-yellow-700 to-yellow-900 shadow-lg flex items-center justify-center text-xl font-bold text-gray-900 uppercase tracking-widest z-10 flex-shrink-0 relative">
-                    Імперія Слота
-                    {/* Quick Bonus Button */}
-                    <button 
-                        id="quickBonusButton" 
-                        onClick={handleClaimQuickBonus}
-                        className="quick-bonus-button absolute left-2 md:left-4 top-1/2 -translate-y-1/2 w-12 h-12 rounded-full bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center text-lg font-bold shadow-md transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95"
+            // Display players in the room
+            const renderPlayers = () => {
+                return playersInRoom.map(player => (
+                    <div 
+                        key={player.user_id} 
+                        className={`p-3 rounded-lg mb-2 shadow-md ${player.user_id === user.userId ? 'bg-blue-700 border-2 border-yellow-400' : 'bg-gray-700'}
+                            ${player.user_id === currentPlayerTurn ? 'animate-pulse border-green-400 border-2' : ''}
+                            ${!player.is_playing ? 'opacity-50 line-through' : ''}
+                        `}
                     >
-                        💰
-                        <span id="quickBonusCooldown" className="quick-bonus-countdown">{quickBonusCooldownText}</span>
-                    </button>
-                    {/* Leaderboard Button was here, now removed as per your request to avoid duplication. Only in bottom nav now. */}
-
-                    {/* Balance and Level Display */}
-                    <div className="balance-area absolute top-16 left-1/2 transform -translate-x-1/2 bg-gray-800 rounded-b-xl py-2 px-4 shadow-inner border border-gray-700 border-t-0 w-full max-w-xs md:max-w-sm z-20">
-                        <div className="flex justify-between items-center w-full mb-1">
-                            <span className="text-base md:text-lg text-gray-300 font-medium">Баланс:</span>
-                            <span className={`font-bold text-yellow-300 text-2xl md:text-3xl ${user.balance !== 0 ? 'animate-pulse-balance' : ''}`}>{user.balance}</span>
-                            <span className="text-base md:text-lg text-gray-300 font-medium ml-2">фантиків</span>
-                        </div>
-                        <div className="level-progress w-full mt-1">
-                            <div className="flex justify-between items-center text-xs text-gray-400 mb-0.5">
-                                <span>Рівень: <span className="font-bold text-white">{user.level}</span></span>
-                                <span>XP: <span className="font-bold text-white">{user.xp}</span>/<span className="font-bold text-white">{user.nextLevelXp}</span></span>
-                            </div>
-                            <div className="xp-bar w-full bg-gray-600 rounded-full h-2">
-                                <div className="h-full bg-blue-500 rounded-full transition-all duration-300 ease-out" style={{ width: `${xpProgress}%` }}></div>
-                            </div>
-                        </div>
-                        {/* Daily Bonus Button - moved here for visual grouping */}
-                        <button 
-                            id="dailyBonusButton" 
-                            onClick={handleClaimDailyBonus}
-                            className="daily-bonus-button bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-bold py-2 px-4 rounded-full text-sm shadow-lg transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 flex items-center justify-center whitespace-nowrap mt-2 w-full"
-                        >
-                            Щоденна Винагорода <span id="dailyBonusCooldown" className="ml-2 text-xs text-blue-200">{dailyBonusCooldownText}</span>
-                        </button>
+                        <p className="font-semibold text-lg">{player.username} {player.user_id === user.userId ? '(Ви)' : ''}</p>
+                        <p className="text-sm text-gray-300">
+                            Карти: {player.hand.length > 0 ? player.hand.join(', ') : 'Немає'} | 
+                            Рахунок: {player.score} | 
+                            Ставка: {player.bet} | 
+                            {player.has_bet ? ' Ставка зроблена' : ' Очікування ставки'}
+                            {!player.is_playing && ' (Не грає)'}
+                        </p>
                     </div>
-                </div>
-            );
-        };
+                ));
+            };
 
+            return (
+                <div className="w-full max-w-md bg-gray-800 p-6 rounded-xl shadow-lg border border-green-500 flex flex-col items-center">
+                    <h3 className="text-xl font-bold text-center text-green-400 mb-4">Блекджек</h3>
+                    <div className="text-center w-full mb-4">
+                        <p className="text-lg font-semibold text-white">{getStatusMessage()}</p>
+                        {contextError && <p className="text-red-400 text-sm mt-1">{contextError}</p>}
+                        {localError && <p className="text-red-400 text-sm mt-1">{localError}</p>}
+                    </div>
 
-        // -----------------------------------------------------------------------------
-        // Main App Component
-        // -----------------------------------------------------------------------------
-        function App() {
-            const { isLoading, error, fetchUserData } = useUser();
-            const [currentPage, setCurrentPage] = useState('slots'); // 'slots', 'coin_flip', 'leaderboard', 'blackjack', 'game3', 'game4', 'game5'
-
-            const renderGame = () => {
-                if (isLoading) {
-                    return (
-                        <div className="flex flex-col items-center justify-center w-full h-full text-white">
-                            <p className="text-xl">Завантаження даних гравця...</p>
+                    {/* Dealer's Hand (hidden until round_end/dealer_turn) */}
+                    {user.blackjackStatus === 'round_end' || user.blackjackStatus === 'dealer_turn' ? (
+                        <div className="w-full bg-gray-900 p-3 rounded-lg mb-4 border border-gray-600">
+                            <p className="font-semibold text-lg text-red-300">Дилер</p>
+                            <p className="text-sm text-gray-300">
+                                Карти: {user.blackjackDealerHand.join(', ')} | Рахунок: {user.blackjackDealerScore}
+                            </p>
                         </div>
-                    );
-                }
+                    ) : (
+                        <div className="w-full bg-gray-900 p-3 rounded-lg mb-4 border border-gray-600">
+                             <p className="font-semibold text-lg text-red-300">Дилер</p>
+                            <p className="text-sm text-gray-300">
+                                Карти: {user.blackjackDealerHand.length > 0 ? user.blackjackDealerHand[0] + ', ??' : 'Немає'} | Рахунок: ?
+                            </p>
+                        </div>
+                    )}
 
-                if (error) {
-                    return (
-                        <div className="flex flex-col items-center justify-center w-full h-full text-white text-center p-4">
-                            <p className="text-xl text-red-500 font-bold mb-4">Помилка завантаження:</p>
-                            <p className="text-lg mb-6">{error}</p>
-                            <button 
-                                onClick={fetchUserData}
-                                className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-full text-lg shadow-lg transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95"
+                    {/* Players in room */}
+                    <div className="w-full mb-4 max-h-48 overflow-y-auto custom-scrollbar">
+                        {renderPlayers()}
+                    </div>
+
+                    {/* Betting/Action Controls */}
+                    {user.blackjackStatus === 'betting' && !hasPlayerBet && isPlayerActive && (
+                        <div className="w-full flex flex-col items-center gap-2 mt-4">
+                            <input
+                                type="number"
+                                value={betAmount}
+                                onChange={(e) => setBetAmount(Math.max(0, parseInt(e.target.value) || 0))}
+                                min="1"
+                                max={user.balance}
+                                className="w-full p-2 rounded-md bg-gray-700 text-white border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            />
+                            <button
+                                onClick={handleBet}
+                                className="w-full py-2 rounded-xl text-lg font-bold bg-gradient-to-r from-purple-500 to-pink-600 hover:from-purple-600 hover:to-pink-700 transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95 shadow-lg"
                             >
-                                Спробувати знову
+                                Зробити ставку ({betAmount})
                             </button>
                         </div>
-                    );
-                }
+                    )}
 
-                switch (currentPage) {
+                    {user.blackjackStatus === 'playing' && isMyTurn && isPlayerActive && (
+                        <div className="w-full flex justify-around gap-4 mt-4">
+                            <button
+                                onClick={() => handleAction('hit')}
+                                className="flex-1 py-3 rounded-xl text-lg font-bold bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95 shadow-lg"
+                            >
+                                Взяти карту
+                            </button>
+                            <button
+                                onClick={() => handleAction('stand')}
+                                className="flex-1 py-3 rounded-xl text-lg font-bold bg-gradient-to-r from-red-500 to-orange-600 hover:from-red-600 hover:to-orange-700 transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95 shadow-lg"
+                            >
+                                Зупинитись
+                            </button>
+                        </div>
+                    )}
+                    
+                    {/* Reconnect button if disconnected */}
+                    {user.blackjackStatus === 'disconnected' && (
+                        <button
+                            onClick={user.connectBlackjackWebSocket}
+                            className="w-full py-3 rounded-xl text-lg font-bold bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700 transition-all duration-200 ease-in-out transform hover:scale-105 active:scale-95 shadow-lg mt-4"
+                        >
+                            Підключитись до гри
+                        </button>
+                    )}
+                </div>
+            );
+        };
+
+
+        const App = () => {
+            const [activeGame, setActiveGame] = useState('blackjack'); // Default to blackjack
+
+            const renderGame = () => {
+                switch (activeGame) {
                     case 'slots':
                         return <SlotMachine />;
                     case 'coin_flip':
                         return <CoinFlip />;
-                    case 'leaderboard':
-                        return <Leaderboard />;
                     case 'blackjack':
-                        return <BlackjackGame />; 
-                    case 'game3': 
-                        return <GamePlaceholder gameName="Колесо Фортуни" icon="🎲" />;
-                    case 'game5': 
-                        return <GamePlaceholder gameName="Покер" icon="🃏" />;
+                        return <BlackjackGame />;
                     default:
-                        return <SlotMachine />;
+                        return <BlackjackGame />;
                 }
             };
 
-            // Log for App component render
-            useEffect(() => {
-                if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
-                    Telegram.WebApp.sendData(`JS_LOG: App component rendered. Current page: ${currentPage}. IsLoading: ${isLoading}. Error: ${error}`);
-                }
-            }, [currentPage, isLoading, error]);
-
-
             return (
-                <div className="casino-app-container relative w-full h-full flex flex-col items-center justify-between bg-gradient-to-br from-purple-900 via-gray-900 to-indigo-900 text-white overflow-hidden">
-                    {/* Top Header with Balance, XP, Level, Bonuses */}
-                    <TopHeader />
+                <div className="flex flex-col items-center justify-start w-full h-full p-4 overflow-y-auto custom-scrollbar">
+                    <BalanceDisplay />
+                    <BonusClaimer />
 
-                    {/* Main Game Content Area - renders current game */}
-                    <div className="relative flex-grow flex flex-col items-center justify-around w-full main-content-area"> 
-                        {renderGame()}
+                    {/* Game Selection Buttons */}
+                    <div className="flex justify-center flex-wrap gap-4 mb-6 w-full max-w-md">
+                        <GameButton icon="fas fa-gem" text="Блекджек" onClick={() => setActiveGame('blackjack')} />
+                        <GameButton icon="fas fa-dice" text="Монетка" onClick={() => setActiveGame('coin_flip')} />
+                        <GameButton icon="fas fa-slots" text="Слоти" onClick={() => setActiveGame('slots')} />
                     </div>
 
-                    {/* Bottom Navigation */}
-                    <div className="bottom-nav fixed bottom-0 w-full h-16 bg-gradient-to-t from-yellow-700 to-yellow-900 shadow-lg flex justify-around items-center z-30">
-                        <button
-                            onClick={() => setCurrentPage('slots')}
-                            className={`nav-button p-2 rounded-full text-2xl transition-all duration-200 ${currentPage === 'slots' ? 'bg-yellow-500 text-gray-900 scale-110 shadow-lg' : 'text-gray-700 hover:text-gray-800'}`}
-                        >
-                            🎰
-                        </button>
-                        <button
-                            onClick={() => setCurrentPage('coin_flip')}
-                            className={`nav-button p-2 rounded-full text-2xl transition-all duration-200 ${currentPage === 'coin_flip' ? 'bg-yellow-500 text-gray-900 scale-110 shadow-lg' : 'text-gray-700 hover:text-gray-800'}`}
-                        >
-                            🪙
-                        </button>
-                        <button
-                            onClick={() => setCurrentPage('blackjack')} 
-                            className={`nav-button p-2 rounded-full text-2xl transition-all duration-200 ${currentPage === 'blackjack' ? 'bg-yellow-500 text-gray-900 scale-110 shadow-lg' : 'text-gray-700 hover:text-gray-800'}`}
-                        >
-                            ♠️ 
-                        </button>
-                        <button
-                            onClick={() => setCurrentPage('leaderboard')}
-                            className={`nav-button p-2 rounded-full text-2xl transition-all duration-200 ${currentPage === 'leaderboard' ? 'bg-yellow-500 text-gray-900 scale-110 shadow-lg' : 'text-gray-700 hover:text-gray-800'}`}
-                        >
-                            👑
-                        </button>
-                        {/* Placeholder buttons for 2 more games */}
-                        <button
-                            onClick={() => setCurrentPage('game3')}
-                            className={`nav-button p-2 rounded-full text-2xl transition-all duration-200 ${currentPage === 'game3' ? 'bg-yellow-500 text-gray-900 scale-110 shadow-lg' : 'text-gray-700 hover:text-gray-800'}`}
-                        >
-                            🎲
-                        </button>
-                        <button
-                            onClick={() => setCurrentPage('game5')}
-                            className={`nav-button p-2 rounded-full text-2xl transition-all duration-200 ${currentPage === 'game5' ? 'bg-yellow-500 text-gray-900 scale-110 shadow-lg' : 'text-gray-700 hover:text-gray-800'}`}
-                        >
-                            🃏
-                        </button>
-                    </div>
+                    {renderGame()}
 
-                    {/* Audio Context Activation Prompt */}
-                    <div id="audioPrompt" className="audio-prompt fixed inset-0 bg-gray-900 bg-opacity-95 flex flex-col items-center justify-center text-center p-8 z-50 hidden">
-                        <p className="text-xl md:text-2xl font-bold mb-4">Натисніть, щоб увімкнути звук</p>
-                        <button id="activateAudioButton" className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-full text-lg shadow-lg transition-all duration-300 ease-in-out">
-                            Увімкнути
-                        </button>
-                    </div>
+                    <style jsx>{`
+                        /* Custom scrollbar for better aesthetics */
+                        .custom-scrollbar::-webkit-scrollbar {
+                            width: 8px;
+                        }
+                        .custom-scrollbar::-webkit-scrollbar-track {
+                            background: #2d3748; /* gray-800 */
+                            border-radius: 10px;
+                        }
+                        .custom-scrollbar::-webkit-scrollbar-thumb {
+                            background: #4a5568; /* gray-700 */
+                            border-radius: 10px;
+                        }
+                        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+                            background: #6b7280; /* gray-600 */
+                        }
 
-                    {/* Custom Modal for Alerts */}
-                    <div id="customModal" className="modal fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-70 hidden">
-                        <div className="modal-content bg-gray-800 rounded-xl shadow-2xl p-6 md:p-8 text-center w-11/12 max-w-sm relative border-2 border-yellow-400">
-                            <button className="close-button absolute top-2 right-4 text-gray-400 hover:text-white text-3xl font-bold transition-colors duration-200" onClick={() => setShowBetModal(false)}>&times;</button>
-                            <p id="modalMessage" className="text-xl md:text-2xl font-semibold mb-4"></p>
-                            <button className="bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold py-2 px-6 rounded-full text-lg shadow-md transition-all duration-300">OK</button>
-                        </div>
-                    </div>
+                        /* Basic animation for slot symbols */
+                        @keyframes bounce-once {
+                            0%, 100% {
+                                transform: translateY(0);
+                            }
+                            20% {
+                                transform: translateY(-5px);
+                            }
+                            40% {
+                                transform: translateY(0);
+                            }
+                            60% {
+                                transform: translateY(-2px);
+                            }
+                            80% {
+                                transform: translateY(0);
+                            }
+                        }
+                        .slot-symbol {
+                            display: inline-block;
+                            animation: none; /* Default to no animation */
+                        }
+                        .slot-symbol:nth-child(1) { animation-delay: 0s; }
+                        .slot-symbol:nth-child(2) { animation-delay: 0.1s; }
+                        .slot-symbol:nth-child(3) { animation-delay: 0.2s; }
+
+                        /* Apply animation when spinning (you'd toggle a class in JS) */
+                        .is-spinning .slot-symbol {
+                            animation: bounce-once 0.6s ease-in-out forwards;
+                        }
+                    `}</style>
                 </div>
             );
-        }
-        
-        // This is the core mounting logic of the React app
-        // It runs AFTER the Babel script has parsed everything above
-        // And we ensure React and ReactDOM are actually loaded
+        };
+
+        // --- Root Render ---
         try {
-            if (typeof React === 'undefined' || typeof ReactDOM === 'undefined') {
-                const rootElement = document.getElementById('root');
-                if (rootElement) {
-                    rootElement.innerHTML = `<p class="text-red-500 text-center mt-10 text-lg">
-                        Критична помилка: React або ReactDOM не завантажено. <br/> Перевірте підключення CDN.
-                    </p>`;
-                }
-                if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
-                    Telegram.WebApp.sendData('JS_FATAL_REACT_ERROR: React or ReactDOM undefined.');
-                }
-                console.error("React or ReactDOM is undefined. Check CDN scripts.");
+            const rootElement = document.getElementById('root');
+            if (!rootElement) {
+                sendTelegramLog('Root element not found in DOM.', 'JS_FATAL_REACT_MOUNT_ERROR');
+                document.body.innerHTML = `<p class="text-red-500 text-center mt-10 text-lg">
+                    Критична помилка: Не знайдено елемент #root.
+                </p>`;
             } else {
-                const rootElement = document.getElementById('root');
                 const initialMessage = document.getElementById('initialLoadingMessage');
+                if (initialMessage) {
+                    initialMessage.textContent = 'Завантаження інтерфейсу...';
+                }
 
-                if (!rootElement) {
-                    console.error("Error: Root element with ID 'root' not found for ReactDOM.createRoot.");
-                    if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
-                        Telegram.WebApp.sendData('JS_ERROR: Root element not found for ReactDOM.');
-                    }
-                    if (initialMessage) {
-                        initialMessage.textContent = 'Критична помилка: Кореневий елемент не знайдено.';
-                        initialMessage.classList.add('text-red-500');
-                    }
-                } else {
-                    // Remove loading message
-                    if (initialMessage) {
-                        initialMessage.remove();
-                    }
+                const root = ReactDOM.createRoot(rootElement);
+                root.render(
+                    <React.StrictMode>
+                        <UserProvider>
+                            <App />
+                        </UserProvider>
+                    </React.StrictMode>
+                );
 
-                    const root = ReactDOM.createRoot(rootElement);
-                    root.render(
-                        <React.StrictMode>
-                            <UserProvider>
-                                <App />
-                            </UserProvider>
-                        </React.StrictMode>
-                    );
-
-                    if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
-                        Telegram.WebApp.sendData('JS_LOG: React app rendered successfully into DOM.');
-                    }
+                if (typeof Telegram !== 'undefined' && Telegram.WebApp) {
+                    Telegram.WebApp.sendData('JS_LOG: React app rendered successfully into DOM.');
                 }
             }
         } catch (e) {
