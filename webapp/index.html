@@ -876,10 +876,11 @@
                 });
                 setBlackjackGameMessage("Ви відключені від гри.");
                 wsReconnectAttempts.current = 0; // Reset attempts
-            }, [sendTelegramLog]);
+            }, [sendTelegramLog]); // Only depends on sendTelegramLog, which is stable.
 
 
             // Blackjack WebSocket Connection Management
+            // This function needs to be stable. Its dependencies should be minimal.
             const connectBlackjackWebSocket = useCallback(() => {
                 sendTelegramLog(`connectBlackjackWebSocket called. user.userId: ${user.userId}, isConnectingWsRef.current: ${isConnectingWsRef.current}, wsRef.current: ${wsRef.current?.readyState}`);
 
@@ -894,19 +895,16 @@
                     return;
                 }
 
-                // Prevent multiple concurrent connection attempts using the ref
                 if (isConnectingWsRef.current) {
                     sendTelegramLog('connectBlackjackWebSocket: Already in connection process (ref), skipping.', 'JS_DEBUG');
                     return;
                 }
 
-                // IMPORTANT: Only proceed if there's no current WebSocket or it's explicitly closed/closing
                 if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
                     sendTelegramLog('connectBlackjackWebSocket: Existing WS connection found and is open or connecting, reusing.', 'JS_DEBUG');
                     return;
                 }
                 
-                // Clear any old, stale WebSocket reference if it's not open/connecting
                 if (wsRef.current && (wsRef.current.readyState === WebSocket.CLOSING || wsRef.current.readyState === WebSocket.CLOSED)) {
                     sendTelegramLog('connectBlackjackWebSocket: Existing WS connection found but closing/closed, clearing ref for new connection.', 'JS_DEBUG');
                     wsRef.current = null;
@@ -935,9 +933,7 @@
                 newWs.onmessage = (event) => {
                     try {
                         const message = JSON.parse(event.data);
-                        // Handle ping messages to keep connection alive
                         if (message.type === "ping") {
-                            // Respond with pong to server's ping
                             newWs.send(JSON.stringify({ type: "pong" }));
                             sendTelegramLog("Blackjack WS: Received ping, sent pong.");
                             return; 
@@ -946,37 +942,34 @@
                         sendTelegramLog(`Blackjack WS: Received: ${JSON.stringify(message).substring(0, 100)}`);
 
                         if (message.type === "error") {
-                            showModal(message.message, "Помилка Гри"); // Use new showModal
+                            showModal(message.message, "Помилка Гри");
                             setBlackjackGameMessage(message.message);
                             sendTelegramLog(`Blackjack WS Error Message: ${message.message}`, 'JS_ERROR');
-                            // If an error occurs, consider a more aggressive disconnect to allow fresh reconnect
                             disconnectBlackjackWebSocket(1001, "Server error received.");
                         } else if (message.type === "game_message") {
                             setBlackjackGameMessage(message.message);
                             sendTelegramLog(`Blackjack WS Game Message: ${message.message}`);
                         } else if (message.type === "level_up") {
                             playLevelUpSound();
-                            showModal(`🎉 Ви досягли Рівня ${message.level}! 🎉`, "Підвищення Рівня!"); // Use new showModal
-                            fetchUserData(); // Update all user stats
+                            showModal(`🎉 Ви досягли Рівня ${message.level}! 🎉`, "Підвищення Рівня!");
+                            fetchUserData(); // This will trigger refetchUserData in UserProvider
                             sendTelegramLog(`Blackjack WS Level Up: ${message.level}`);
-                        } else if (message.room_id) { // It's a room state update
+                        } else if (message.room_id) {
                             setBlackjackRoomState(prevState => {
                                 const newTimer = (message.status === "starting_timer" || message.status === "betting" || message.status === "playing") ? message.timer : 0;
                                 sendTelegramLog(`Blackjack WS State Update: Status=${message.status}, Timer=${message.timer}, Players=${message.players.length}`);
-                                // Log player-specific details for debugging freeze
                                 message.players.forEach(p => {
                                     sendTelegramLog(`  Player ${p.username} (${p.user_id}): Score=${p.score}, Bet=${p.bet}, is_playing=${p.is_playing}, has_bet=${p.has_bet}`);
                                 });
                                 return { ...message, timer: newTimer }; 
                             });
-                            // Only update general game message if it's not a round_result (which has its own specific message)
                             if (message.type !== "round_result") {
                                 setBlackjackGameMessage(getGameStatusMessage(message, user.userId));
                             }
                         } else if (message.type === "round_result") {
                             const { message: resultMsg, winnings, balance, xp, level, next_level_xp, final_player_score } = message;
                             setBlackjackGameMessage(resultMsg);
-                            showModal( // Use new showModal
+                            showModal(
                                 `Результат: ${resultMsg}<br/>Ваш рахунок: ${final_player_score}<br/>Виграш: ${winnings} фантиків!`,
                                 "Результат Раунду"
                             );
@@ -1008,17 +1001,15 @@
                     sendTelegramLog(`Blackjack WS: Disconnected. Code: ${event.code}, Reason: ${event.reason}.`, 'JS_WARN');
                     isConnectingWsRef.current = false; // Reset connecting flag on close
                     
-                    // Only attempt reconnect if it was not a clean close (code 1000)
-                    if (event.code !== 1000 && wsReconnectAttempts.current < 5) { // 1000 is normal closure
+                    if (event.code !== 1000 && wsReconnectAttempts.current < 5) {
                         wsReconnectAttempts.current++;
                         const delay = Math.min(1000 * (wsReconnectAttempts.current + 1), 5000);
                         sendTelegramLog(`Attempting to reconnect WS in ${delay / 1000} seconds (attempt ${wsReconnectAttempts.current}).`, 'JS_LOG');
                         wsReconnectTimeout.current = setTimeout(() => connectBlackjackWebSocket(), delay);
-                    } else if (event.code !== 1000) { // If it was an unclean close and max attempts reached
+                    } else if (event.code !== 1000) {
                         sendTelegramLog('Max WebSocket reconnect attempts reached. Please refresh.', 'JS_ERROR');
                         showModal('Відключено від гри. Будь ласка, оновіть сторінку або спробуйте підключитися знову.', 'Помилка підключення');
                     }
-                    // Always reset state and flags regardless of reconnect attempt
                     setBlackjackRoomState(prev => ({ 
                         ...prev, 
                         status: "disconnected", 
@@ -1033,47 +1024,60 @@
                         max_players: 0,
                     }));
                     setBlackjackGameMessage("Відключено від гри. Спробуйте підключитися.");
-                    wsRef.current = null; // Clear the ref on close
+                    wsRef.current = null;
                 };
 
                 newWs.onerror = (error) => {
                     sendTelegramLog(`Blackjack WS: Error: ${error.message || error}`, 'JS_ERROR');
                     setBlackjackGameMessage(`Помилка підключення: ${error.message || error}`);
                     setBlackjackRoomState(prev => ({ ...prev, status: "error", room_id: null, timer: 0 }));
-                    if (wsRef.current) {
-                        wsRef.current.close(); // Force close to trigger onclose and reconnect logic
+                    if (newWs) { // Use newWs here, not wsRef.current
+                        newWs.close(); // Force close to trigger onclose and reconnect logic
                     }
                     wsRef.current = null;
-                    isConnectingWsRef.current = false; // Reset connecting flag on error
+                    isConnectingWsRef.current = false;
                 };
 
                 wsRef.current = newWs;
-            }, [user.userId, API_BASE_URL, sendTelegramLog, fetchUserData, getGameStatusMessage, setUser, sendWsMessage, showModal, disconnectBlackjackWebSocket]);
+            }, [user.userId, API_BASE_URL, sendTelegramLog, fetchUserData, getGameStatusMessage, setUser, sendWsMessage, showModal, disconnectBlackjackWebSocket]); // Dependencies for this useCallback
 
 
-            // Effect to connect to WebSocket and request state when component mounts
+            // Effect to manage WebSocket connection based on currentPage and user.userId
             useEffect(() => {
-                sendTelegramLog(`BlackjackGame useEffect triggered. user.userId: ${user.userId}, currentPage prop: ${currentPage}`);
-                if (user.userId && currentPage === 'blackjack') { // Use currentPage prop
-                    connectBlackjackWebSocket();
+                sendTelegramLog(`BlackjackGame WS Lifecycle Effect. currentPage: ${currentPage}, user.userId: ${user.userId}`);
+
+                if (currentPage === 'blackjack' && user.userId) {
+                    // If we are on the blackjack page and user is identified, ensure WS is connected
+                    if (!wsRef.current || (wsRef.current.readyState !== WebSocket.OPEN && wsRef.current.readyState !== WebSocket.CONNECTING)) {
+                        sendTelegramLog('BlackjackGame WS Lifecycle: Connecting WS as on Blackjack page.');
+                        connectBlackjackWebSocket(); // Call the stable useCallback
+                    } else {
+                        sendTelegramLog('BlackjackGame WS Lifecycle: Already connected or connecting, no action.');
+                    }
+                } else {
+                    // If we are NOT on the blackjack page, ensure WS is disconnected
+                    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
+                        sendTelegramLog('BlackjackGame WS Lifecycle: Disconnecting WS as navigated away.');
+                        disconnectBlackjackWebSocket(1000, "Navigated away from Blackjack."); // Call the stable useCallback
+                    } else {
+                        sendTelegramLog('BlackjackGame WS Lifecycle: WS not active, no disconnect needed.');
+                    }
                 }
 
-                // Cleanup function for when BlackjackGame component unmounts
+                // This cleanup function will run when the component unmounts OR when dependencies change.
+                // However, the logic inside the effect itself handles connection/disconnection based on currentPage.
+                // So, this cleanup primarily ensures a clean disconnect if the component unmounts entirely,
+                // or if currentPage changes away from 'blackjack' (though the main if/else handles this too).
                 return () => {
-                    sendTelegramLog('BlackjackGame cleanup: Component unmounted.');
-                    // Send leave_room message if in a room before disconnecting
-                    if (user.userId && blackjackRoomState.room_id && wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                        try {
-                            wsRef.current.send(JSON.stringify({ action: 'leave_room', user_id: user.userId, room_id: blackjackRoomState.room_id }));
-                            sendTelegramLog(`BlackjackGame cleanup: Sent leave_room for user ${user.userId} from room ${blackjackRoomState.room_id}.`);
-                        } catch (e) {
-                            sendTelegramLog(`BlackjackGame cleanup: Error sending leave_room on unmount: ${e.message}`, 'JS_ERROR');
-                        }
+                    sendTelegramLog('BlackjackGame WS Lifecycle Cleanup: Running on unmount.');
+                    // Ensure explicit disconnect if component unmounts while still connected
+                    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
+                        sendTelegramLog('BlackjackGame WS Lifecycle Cleanup: Forcing disconnect on unmount.');
+                        disconnectBlackjackWebSocket(1000, "Component unmounted during cleanup.");
                     }
-                    // Always disconnect cleanly on unmount
-                    disconnectBlackjackWebSocket(1000, "Component unmounted.");
                 };
-            }, [user.userId, currentPage, connectBlackjackWebSocket, sendTelegramLog, disconnectBlackjackWebSocket]);
+            }, [currentPage, user.userId]); // ONLY DEPEND ON currentPage and user.userId.
+            // connectBlackjackWebSocket and disconnectBlackjackWebSocket are stable callbacks, so they don't need to be here.
 
 
             // Effect to update local timer based on blackjackRoomState.status
@@ -1253,8 +1257,10 @@
                                 <p className="mb-4">Ваша поточна ставка: {BLACKJACK_BET_AMOUNT} фантиків.</p>
                                 <button 
                                     onClick={() => { 
+                                        sendTelegramLog(`handleBet: Sending bet message for user ${user.userId}, room ${blackjackRoomState.room_id}, amount ${BLACKJACK_BET_AMOUNT}`);
                                         sendWsMessage("bet", { amount: BLACKJACK_BET_AMOUNT }); 
                                         setShowBetModal(false); 
+                                        setBlackjackGameMessage("Ваша ставка прийнята. Очікування інших гравців..."); // Optimistic UI update
                                     }}
                                     className="bg-yellow-500 hover:bg-yellow-600 text-gray-900 font-bold py-2 px-6 rounded-full text-lg shadow-md transition-all duration-300"
                                 >
