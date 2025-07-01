@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, Router # Import Router
 from aiogram.enums import ParseMode
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message
 from aiogram.filters import CommandStart, Command
@@ -132,7 +132,7 @@ def get_xp_for_next_level(level: int) -> int:
     return LEVEL_THRESHOLDS[level] 
 
 PAYOUTS = {
-    ('🍒', '🍒', '🍒'): 1000, ('🍋', '🍋', '🍋'): 800, ('🍊', '🍊', '🍊'): 600,
+    ('🍒', '🍒', '🍒'): 1000, ('�', '🍋', '🍋'): 800, ('🍊', '🍊', '🍊'): 600,
     ('🍇', '🍇', '🍇'): 400, ('🔔', '🔔', '🔔'): 300, ('💎', '💎', '💎'): 200,
     ('🍀', '🍀', '🍀'): 150, ('⭐', '⭐', '⭐'): 2000, 
     ('🍒', '🍒'): 100, ('🍋', '🍋'): 80, ('🍊', '🍊'): 60,
@@ -438,7 +438,7 @@ def coin_flip_game_logic(user_id: int | str, choice: str) -> Dict:
 
 # --- Обробники Telegram-бота (aiogram v3 синтаксис) ---
 # Define a separate router for Telegram handlers
-telegram_router = Dispatcher()
+telegram_router = Router() # CORRECTED: Changed to Router()
 
 @telegram_router.message(CommandStart())
 async def send_welcome(message: Message):
@@ -1160,7 +1160,7 @@ class BlackjackRoom:
             if player.hand.value > 21:
                 player.is_playing = False # Гравець перебрав
                 try:
-                    await player.websocket.send_json({"type": "game_message", "message": "Перебір! Ви програли. 💥"})
+                    await player.websocket.send_json({"type": "game_message", "message": "Ви перебрали! 💥"})
                 except WebSocketDisconnect:
                     logger.warning(f"Player {user_id} disconnected during game_message send (busted).")
                     await self.remove_player(user_id)
@@ -1579,7 +1579,7 @@ async def on_startup():
     
     if API_TOKEN and API_TOKEN != "DUMMY_TOKEN":
         # Register the telegram_router with the main dispatcher
-        dp.include_router(telegram_router) # CORRECTED: This line should be here, not inside on_startup directly
+        dp.include_router(telegram_router) # CORRECTED: telegram_router is now a Router()
         try:
             webhook_info = await bot.get_webhook_info()
             if webhook_info.url != WEBHOOK_URL:
