@@ -132,7 +132,7 @@ def get_xp_for_next_level(level: int) -> int:
     return LEVEL_THRESHOLDS[level] 
 
 PAYOUTS = {
-    ('🍒', '🍒', '🍒'): 1000, ('�', '🍋', '🍋'): 800, ('🍊', '🍊', '🍊'): 600,
+    ('🍒', '🍒', '🍒'): 1000, ('🍋', '🍋', '🍋'): 800, ('🍊', '🍊', '🍊'): 600,
     ('🍇', '🍇', '🍇'): 400, ('🔔', '🔔', '🔔'): 300, ('💎', '💎', '💎'): 200,
     ('🍀', '🍀', '🍀'): 150, ('⭐', '⭐', '⭐'): 2000, 
     ('🍒', '🍒'): 100, ('🍋', '🍋'): 80, ('🍊', '🍊'): 60,
@@ -875,9 +875,9 @@ class BlackjackRoom:
             logger.info(f"Room {room_id}: Betting timer finished. Forcing check for round start.")
             # Позначаємо гравців, які не поставили, як not playing
             for player in room.players.values():
-                if not player.has_bet:
-                    player.is_playing = False
-                    player.has_bet = True
+                if not player.has_bet: # Якщо гравець не зробив ставку
+                    player.is_playing = False # Він не бере участі в цьому раунді
+                    player.has_bet = True # Але його фаза ставок завершена
                     logger.info(f"Player {player.user_id} did not bet in time, marked as not playing for this round.")
             await room.send_room_state_to_all() # Оновити стан після примусового завершення ставок
             room._check_and_start_round_if_ready()
@@ -1078,7 +1078,7 @@ class BlackjackRoom:
                 await self.remove_player(user_id)
             
             player.is_playing = False # Гравець не бере участі в цьому раунді
-            player.has_bet = True # Він "завершив" фазу ставок, хоч і не зробив її
+            player.has_bet = True # Але його фаза ставок завершена
             await self.send_room_state_to_all() # Оновити стан, щоб інші бачили, що цей гравець не грає
             
             # Після того, як гравець позначений як "не грає", перевіряємо, чи можна почати раунд
