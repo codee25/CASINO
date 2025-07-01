@@ -735,7 +735,7 @@
         // -----------------------------------------------------------------------------
         const BLACKJACK_BET_AMOUNT = 200; // Fixed bet amount for Blackjack
 
-        const BlackjackGame = () => {
+        const BlackjackGame = ({ currentPage }) => { // Accept currentPage as prop
             const { user, fetchUserData, API_BASE_URL, sendTelegramLog, setUser } = useUser();
             const { showModal } = useModal(); // Use the new modal hook
             
@@ -743,7 +743,7 @@
             const wsRef = useRef(null);
             const wsReconnectAttempts = useRef(0);
             const wsReconnectTimeout = useRef(null);
-            const [isConnectingWs, setIsConnectingWs] = useState(false); // New state to control connection attempts
+            const isConnectingWsRef = useRef(false); // Changed to useRef
 
             const [blackjackRoomState, setBlackjackRoomState] = useState({
                 room_id: null,
@@ -830,7 +830,6 @@
                             sendTelegramLog(`WS Sent (debounced): ${action} with payload ${JSON.stringify(payload).substring(0, 50)}`);
                         } else {
                             sendTelegramLog(`WS Error (debounced): Tried to send ${action} but WebSocket not open. Current readyState: ${wsRef.current ? wsRef.current.readyState : 'null'}`, 'JS_ERROR');
-                            // showModal("Помилка: WebSocket не підключений. Спробуйте перепідключитися.", "Помилка зв'язку");
                         }
                     }, 500); // Debounce for 500ms
                 } else {
@@ -848,6 +847,7 @@
 
             // Function to cleanly disconnect WebSocket
             const disconnectBlackjackWebSocket = useCallback((code = 1000, reason = "User initiated disconnect.") => {
+                sendTelegramLog(`disconnectBlackjackWebSocket called. Current readyState: ${wsRef.current?.readyState}, isConnectingWsRef.current: ${isConnectingWsRef.current}`);
                 if (wsRef.current) {
                     if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
                         sendTelegramLog(`Blackjack WS: Closing connection cleanly. Code: ${code}, Reason: ${reason}`);
@@ -861,7 +861,7 @@
                     clearTimeout(wsReconnectTimeout.current);
                     wsReconnectTimeout.current = null;
                 }
-                setIsConnectingWs(false); // Ensure connecting flag is reset
+                isConnectingWsRef.current = false; // Ensure connecting flag is reset
                 setBlackjackRoomState({ // Reset to initial disconnected state
                     room_id: null,
                     status: "disconnected",
@@ -881,6 +881,8 @@
 
             // Blackjack WebSocket Connection Management
             const connectBlackjackWebSocket = useCallback(() => {
+                sendTelegramLog(`connectBlackjackWebSocket called. user.userId: ${user.userId}, isConnectingWsRef.current: ${isConnectingWsRef.current}, wsRef.current: ${wsRef.current?.readyState}`);
+
                 if (!user.userId) {
                     sendTelegramLog('connectBlackjackWebSocket: User ID not available, skipping WS connection.', 'JS_DEBUG');
                     showModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб отримати User ID.', "Недоступно");
@@ -892,9 +894,9 @@
                     return;
                 }
 
-                // Prevent multiple concurrent connection attempts
-                if (isConnectingWs) {
-                    sendTelegramLog('connectBlackjackWebSocket: Already in connection process, skipping.', 'JS_DEBUG');
+                // Prevent multiple concurrent connection attempts using the ref
+                if (isConnectingWsRef.current) {
+                    sendTelegramLog('connectBlackjackWebSocket: Already in connection process (ref), skipping.', 'JS_DEBUG');
                     return;
                 }
 
@@ -910,7 +912,7 @@
                     wsRef.current = null;
                 }
 
-                setIsConnectingWs(true); // Set connecting flag
+                isConnectingWsRef.current = true; // Set connecting flag using ref
                 const websocketUrl = `wss://${new URL(API_BASE_URL).host}/ws/${user.userId}`;
                 sendTelegramLog(`connectBlackjackWebSocket: Attempting to establish NEW WebSocket to: ${websocketUrl}`);
                 setBlackjackRoomState(prev => ({ ...prev, status: "connecting" })); // Set connecting status
@@ -927,7 +929,7 @@
                         clearTimeout(wsReconnectTimeout.current);
                         wsReconnectTimeout.current = null;
                     }
-                    setIsConnectingWs(false); // Reset connecting flag on success
+                    isConnectingWsRef.current = false; // Reset connecting flag on success
                 };
 
                 newWs.onmessage = (event) => {
@@ -1004,6 +1006,7 @@
 
                 newWs.onclose = (event) => {
                     sendTelegramLog(`Blackjack WS: Disconnected. Code: ${event.code}, Reason: ${event.reason}.`, 'JS_WARN');
+                    isConnectingWsRef.current = false; // Reset connecting flag on close
                     
                     // Only attempt reconnect if it was not a clean close (code 1000)
                     if (event.code !== 1000 && wsReconnectAttempts.current < 5) { // 1000 is normal closure
@@ -1031,7 +1034,6 @@
                     }));
                     setBlackjackGameMessage("Відключено від гри. Спробуйте підключитися.");
                     wsRef.current = null; // Clear the ref on close
-                    setIsConnectingWs(false); // Reset connecting flag on close
                 };
 
                 newWs.onerror = (error) => {
@@ -1042,17 +1044,17 @@
                         wsRef.current.close(); // Force close to trigger onclose and reconnect logic
                     }
                     wsRef.current = null;
-                    setIsConnectingWs(false); // Reset connecting flag on error
+                    isConnectingWsRef.current = false; // Reset connecting flag on error
                 };
 
                 wsRef.current = newWs;
-            }, [user.userId, API_BASE_URL, sendTelegramLog, fetchUserData, getGameStatusMessage, setUser, sendWsMessage, showModal, isConnectingWs, disconnectBlackjackWebSocket]);
+            }, [user.userId, API_BASE_URL, sendTelegramLog, fetchUserData, getGameStatusMessage, setUser, sendWsMessage, showModal, disconnectBlackjackWebSocket]);
 
 
             // Effect to connect to WebSocket and request state when component mounts
             useEffect(() => {
-                if (user.userId) {
-                    sendTelegramLog('BlackjackGame component mounted. Attempting to connect WS.');
+                sendTelegramLog(`BlackjackGame useEffect triggered. user.userId: ${user.userId}, currentPage prop: ${currentPage}`);
+                if (user.userId && currentPage === 'blackjack') { // Use currentPage prop
                     connectBlackjackWebSocket();
                 }
 
@@ -1071,7 +1073,7 @@
                     // Always disconnect cleanly on unmount
                     disconnectBlackjackWebSocket(1000, "Component unmounted.");
                 };
-            }, [user.userId, connectBlackjackWebSocket, sendTelegramLog, disconnectBlackjackWebSocket]); // Removed blackjackRoomState.room_id from dependencies
+            }, [user.userId, currentPage, connectBlackjackWebSocket, sendTelegramLog, disconnectBlackjackWebSocket]);
 
 
             // Effect to update local timer based on blackjackRoomState.status
@@ -1181,9 +1183,9 @@
                             <button
                                 onClick={connectBlackjackWebSocket}
                                 className="spin-button bg-gray-500 hover:bg-gray-600 text-white py-3 px-6 rounded-full text-lg shadow-xl transition-all duration-300 transform hover:scale-105 active:scale-95 w-full uppercase"
-                                disabled={isConnectingWs} // Disable if already connecting
+                                disabled={isConnectingWsRef.current} // Disable if already connecting using ref
                             >
-                                {isConnectingWs ? "Підключення..." : "Підключитись до гри"}
+                                {isConnectingWsRef.current ? "Підключення..." : "Підключитись до гри"}
                             </button>
                         )}
 
@@ -1553,7 +1555,7 @@
                     case 'leaderboard':
                         return <Leaderboard />;
                     case 'blackjack':
-                        return <BlackjackGame />; 
+                        return <BlackjackGame currentPage={currentPage} />; // Pass currentPage as prop
                     case 'game3': 
                         return <GamePlaceholder gameName="Колесо Фортуни" icon="🎲" />;
                     case 'game5': 
