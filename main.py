@@ -68,12 +68,24 @@ else:
 
 # --- Database Connection ---
 def get_db_connection():
+    conn = None
+    if not DATABASE_URL:
+        logger.error("Attempted to connect to DB, but DATABASE_URL is not set.")
+        raise ValueError("DATABASE_URL is not configured.")
     try:
-        conn = psycopg2.connect(DATABASE_URL)
-        conn.autocommit = True
+        url = urllib.parse.urlparse(DATABASE_URL)
+        conn = psycopg2.connect(
+            database=url.path[1:], user=url.username, password=url.password,
+            host=url.hostname, port=url.port, sslmode='require', 
+            keepalives=1, keepalives_idle=30, keepalives_interval=10, keepalives_count=5
+        )
+        logger.info("Successfully connected to PostgreSQL database.")
         return conn
+    except psycopg2.Error as err:
+        logger.error(f"DB connection error: {err}")
+        raise
     except Exception as e:
-        logger.error(f"Failed to connect to PostgreSQL database: {e}")
+        logger.error(f"Unexpected error during DB connection: {e}")
         raise
 
 def init_db():
@@ -123,91 +135,105 @@ def init_db():
 init_db()
 
 # --- User Data Operations ---
-async def get_user_data(user_id: int, username: str = 'Unnamed Player'):
+def get_user_data(user_id: int | str) -> dict:
+    user_id_int = int(user_id) 
     conn = None
     try:
         conn = get_db_connection()
-        cur = conn.cursor()
-        cur.execute("SELECT balance, xp, level, last_free_coins_claim, last_daily_bonus_claim, last_quick_bonus_claim FROM users WHERE user_id = %s", (user_id,))
-        user_data = cur.fetchone()
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT username, balance, xp, level, last_free_coins_claim, last_daily_bonus_claim, last_quick_bonus_claim FROM users WHERE user_id = %s', 
+            (user_id_int,)
+        )
+        result = cursor.fetchone()
+        if result:
+            logger.info(f"Retrieved user {user_id_int} data: balance={result[1]}, xp={result[2]}, level={result[3]}")
+            last_free_coins_claim_db = result[4]
+            if last_free_coins_claim_db and last_free_coins_claim_db.tzinfo is None:
+                last_free_coins_claim_db = last_free_coins_claim_db.replace(tzinfo=timezone.utc)
+            
+            last_daily_bonus_claim_db = result[5]
+            if last_daily_bonus_claim_db and last_daily_bonus_claim_db.tzinfo is None:
+                last_daily_bonus_claim_db = last_daily_bonus_claim_db.replace(tzinfo=timezone.utc)
 
-        if user_data:
-            balance, xp, level, last_free_coins_claim, last_daily_bonus_claim, last_quick_bonus_claim = user_data
-            logger.info(f"Retrieved user {user_id} data: balance={balance}, xp={xp}, level={level}")
+            last_quick_bonus_claim_db = result[6]
+            if last_quick_bonus_claim_db and last_quick_bonus_claim_db.tzinfo is None:
+                last_quick_bonus_claim_db = last_quick_bonus_claim_db.replace(tzinfo=timezone.utc)
+
             return {
-                "user_id": user_id,
-                "username": username, # Ensure username is passed through
-                "balance": balance,
-                "xp": xp,
-                "level": level,
-                "last_free_coins_claim": last_free_coins_claim,
-                "last_daily_bonus_claim": last_daily_bonus_claim,
-                "last_quick_bonus_claim": last_quick_bonus_claim
+                'username': result[0], 'balance': result[1], 'xp': result[2], 'level': result[3],
+                'last_free_coins_claim': last_free_coins_claim_db,
+                'last_daily_bonus_claim': last_daily_bonus_claim_db,
+                'last_quick_bonus_claim': last_quick_bonus_claim_db
             }
         else:
-            # Create new user if not found
-            cur.execute(
-                "INSERT INTO users (user_id, username, balance, xp, level) VALUES (%s, %s, %s, %s, %s) RETURNING balance, xp, level, last_free_coins_claim, last_daily_bonus_claim, last_quick_bonus_claim",
-                (user_id, username, 1000, 0, 1) # Initial balance, xp, level
+            initial_balance = 10000
+            cursor.execute(
+                'INSERT INTO users (user_id, username, balance, xp, level, last_free_coins_claim, last_daily_bonus_claim, last_quick_bonus_claim) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)', 
+                (user_id_int, 'Unnamed Player', initial_balance, 0, 1, None, None, None)
             )
-            new_user_data = cur.fetchone()
             conn.commit()
-            logger.info(f"Created new user {user_id} with initial balance 1000.")
-            balance, xp, level, last_free_coins_claim, last_daily_bonus_claim, last_quick_bonus_claim = new_user_data
+            logger.info(f"Created new user {user_id_int} with initial balance {initial_balance}.")
             return {
-                "user_id": user_id,
-                "username": username,
-                "balance": balance,
-                "xp": xp,
-                "level": level,
-                "last_free_coins_claim": last_free_coins_claim,
-                "last_daily_bonus_claim": last_daily_bonus_claim,
-                "last_quick_bonus_claim": last_quick_bonus_claim
+                'username': 'Unnamed Player', 'balance': initial_balance, 'xp': 0, 'level': 1, 
+                'last_free_coins_claim': None, 'last_daily_bonus_claim': None, 'last_quick_bonus_claim': None
             }
     except Exception as e:
-        logger.error(f"Error getting or creating user {user_id}: {e}")
-        raise
+        logger.error(f"Error getting user data from PostgreSQL for {user_id_int}: {e}", exc_info=True)
+        return {
+            'username': 'Error Player', 'balance': 0, 'xp': 0, 'level': 1, 
+            'last_free_coins_claim': None, 'last_daily_bonus_claim': None, 'last_quick_bonus_claim': None
+        }
     finally:
         if conn:
             conn.close()
 
-async def update_user_data(user_id: int, balance: int, xp: int, level: int, last_free_coins_claim: Optional[datetime] = None, last_daily_bonus_claim: Optional[datetime] = None, last_quick_bonus_claim: Optional[datetime] = None):
+def update_user_data(user_id: int | str, **kwargs):
+    user_id_int = int(user_id)
     conn = None
     try:
         conn = get_db_connection()
-        cur = conn.cursor()
+        cursor = conn.cursor()
+
+        current_data_from_db = get_user_data(user_id_int) 
+        logger.info(f"Before update for {user_id_int}: {current_data_from_db.get('balance', 'N/A')} balance, {current_data_from_db.get('xp', 'N/A')} xp, {current_data_from_db.get('level', 'N/A')} level.")
+
+        update_fields_parts = []
+        update_values = []
+
+        fields_to_update = {
+            'username': kwargs.get('username', current_data_from_db.get('username', 'Unnamed Player')),
+            'balance': kwargs.get('balance', current_data_from_db.get('balance', 0)),
+            'xp': kwargs.get('xp', current_data_from_db.get('xp', 0)),
+            'level': kwargs.get('level', current_data_from_db.get('level', 1)),
+            'last_free_coins_claim': kwargs.get('last_free_coins_claim', current_data_from_db.get('last_free_coins_claim')),
+            'last_daily_bonus_claim': kwargs.get('last_daily_bonus_claim', current_data_from_db.get('last_daily_bonus_claim')),
+            'last_quick_bonus_claim': kwargs.get('last_quick_bonus_claim', current_data_from_db.get('last_quick_bonus_claim'))
+        }
         
-        # Fetch current data to log before update
-        cur.execute("SELECT balance, xp, level FROM users WHERE user_id = %s", (user_id,))
-        current_data = cur.fetchone()
-        if current_data:
-            logger.info(f"Before update for {user_id}: {current_data[0]} balance, {current_data[1]} xp, {current_data[2]} level.")
+        for key in ['last_free_coins_claim', 'last_daily_bonus_claim', 'last_quick_bonus_claim']:
+            if fields_to_update[key] and fields_to_update[key].tzinfo is None:
+                fields_to_update[key] = fields_to_update[key].replace(tzinfo=timezone.utc)
 
-        update_query = """
-            UPDATE users
-            SET balance = %s, xp = %s, level = %s
-        """
-        params = [balance, xp, level]
-
-        if last_free_coins_claim is not None:
-            update_query += ", last_free_coins_claim = %s"
-            params.append(last_free_coins_claim)
-        if last_daily_bonus_claim is not None:
-            update_query += ", last_daily_bonus_claim = %s"
-            params.append(last_daily_bonus_claim)
-        if last_quick_bonus_claim is not None:
-            update_query += ", last_quick_bonus_claim = %s"
-            params.append(last_quick_bonus_claim)
+        for field, value in fields_to_update.items():
+            update_fields_parts.append(sql.SQL("{} = %s").format(sql.Identifier(field)))
+            update_values.append(value)
         
-        update_query += " WHERE user_id = %s"
-        params.append(user_id)
+        if not update_fields_parts:
+            logger.info(f"No fields specified for update for user {user_id_int}.")
+            return
 
-        cur.execute(update_query, tuple(params))
+        update_query = sql.SQL('''
+            UPDATE users SET {fields} WHERE user_id = %s
+        ''').format(fields=sql.SQL(', ').join(update_fields_parts))
+
+        update_values.append(user_id_int)
+
+        cursor.execute(update_query, update_values)
         conn.commit()
-        logger.info(f"User {user_id} data updated. New balance: {balance}, XP: {xp}, Level: {level}.")
+        logger.info(f"User {user_id_int} data updated. New balance: {fields_to_update.get('balance')}, XP: {fields_to_update.get('xp')}, Level: {fields_to_update.get('level')}.")
     except Exception as e:
-        logger.error(f"Error updating user {user_id} data: {e}")
-        raise
+        logger.error(f"Error updating user data in PostgreSQL for {user_id_int}: {e}", exc_info=True)
     finally:
         if conn:
             conn.close()
@@ -253,7 +279,7 @@ async def command_start_handler(message: Message) -> None:
     username = message.from_user.username or message.from_user.first_name or f"Гравець {str(user_id)[-4:]}"
     
     try:
-        user_data = await get_user_data(user_id, username)
+        user_data = get_user_data(user_id) # Use the single get_user_data
         logger.info(f"CommandStart: User {user_id} fetched data: {user_data}")
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -277,7 +303,7 @@ async def command_balance_handler(message: Message) -> None:
     user_id = message.from_user.id
     username = message.from_user.username or message.from_user.first_name or f"Гравець {str(user_id)[-4:]}"
     try:
-        user_data = await get_user_data(user_id, username)
+        user_data = get_user_data(user_id) # Use the single get_user_data
         await message.answer(
             f"Ваш баланс: {user_data['balance']} фантиків.\n"
             f"Ваш рівень: {user_data['level']} (XP: {user_data['xp']}/{get_next_level_xp(user_data['level'])})"
@@ -307,7 +333,7 @@ class HitStandRequest(UserRequest):
 @app.post("/api/get_balance")
 async def get_balance(request: UserRequest):
     try:
-        user_data = await get_user_data(request.user_id, request.username)
+        user_data = get_user_data(request.user_id) # Use the single get_user_data
         user_data['next_level_xp'] = get_next_level_xp(user_data['level'])
         return user_data
     except Exception as e:
@@ -321,7 +347,7 @@ async def spin_slot(request: SpinRequest):
     SPIN_COST = 100
     
     try:
-        user_data = await get_user_data(user_id, username)
+        user_data = get_user_data(user_id) # Use the single get_user_data
         if user_data["balance"] < SPIN_COST:
             raise HTTPException(status_code=400, detail={"error": "Insufficient funds"})
 
@@ -352,9 +378,9 @@ async def spin_slot(request: SpinRequest):
             elif reel1 == '🔔': winnings = 750; xp_gain = 15
             elif reel1 == '🍀': winnings = 500; xp_gain = 10
             elif reel1 == '🍒': winnings = 400; xp_gain = 8
-            elif reel1 == '🍇': winnings = 300; xp_gain = 6
             elif reel1 == '🍊': winnings = 200; xp_gain = 4
-            elif reel1 == '🍋': winnings = 150; xp_gain = 3
+            elif reel1 == '�': winnings = 150; xp_gain = 3
+            elif reel1 == '🍇': winnings = 300; xp_gain = 6
             else: winnings = 100; xp_gain = 2 # Should not happen with current symbols
         
         # Wild symbol logic (simplified: replaces any single symbol to make a match)
@@ -382,7 +408,7 @@ async def spin_slot(request: SpinRequest):
         user_data["level"] = new_level
         user_data["xp"] = new_xp # XP might not change if level up consumes it, but here it just accumulates
 
-        await update_user_data(user_id, user_data["balance"], user_data["xp"], user_data["level"])
+        update_user_data(user_id, balance=user_data["balance"], xp=user_data["xp"], level=user_data["level"]) # Use the single update_user_data
 
         return {
             "symbols": [reel1, reel2, reel3],
@@ -409,7 +435,7 @@ async def coin_flip(request: CoinFlipRequest):
         raise HTTPException(status_code=400, detail={"error": "Invalid choice. Must be 'heads' or 'tails'."})
 
     try:
-        user_data = await get_user_data(user_id, username)
+        user_data = get_user_data(user_id) # Use the single get_user_data
         if user_data["balance"] < FLIP_COST:
             raise HTTPException(status_code=400, detail={"error": "Insufficient funds"})
 
@@ -434,7 +460,7 @@ async def coin_flip(request: CoinFlipRequest):
         user_data["level"] = new_level
         user_data["xp"] = new_xp
 
-        await update_user_data(user_id, user_data["balance"], user_data["xp"], user_data["level"])
+        update_user_data(user_id, balance=user_data["balance"], xp=user_data["xp"], level=user_data["level"]) # Use the single update_user_data
 
         return {
             "result": result,
@@ -460,7 +486,7 @@ async def claim_daily_bonus(request: UserRequest):
     COOLDOWN_HOURS = 24
 
     try:
-        user_data = await get_user_data(user_id, username)
+        user_data = get_user_data(user_id) # Use the single get_user_data
         last_claim = user_data.get("last_daily_bonus_claim")
         now = datetime.now(timezone.utc)
 
@@ -479,13 +505,13 @@ async def claim_daily_bonus(request: UserRequest):
         user_data["level"] = new_level
         user_data["xp"] = new_xp
 
-        await update_user_data(
+        update_user_data(
             user_id,
-            user_data["balance"],
-            user_data["xp"],
-            user_data["level"],
+            balance=user_data["balance"],
+            xp=user_data["xp"],
+            level=user_data["level"],
             last_daily_bonus_claim=now
-        )
+        ) # Use the single update_user_data
         return {"message": f"Ви успішно отримали {BONUS_AMOUNT} фантиків!", "amount": BONUS_AMOUNT}
 
     except HTTPException:
@@ -502,7 +528,7 @@ async def claim_quick_bonus(request: UserRequest):
     COOLDOWN_MINUTES = 15
 
     try:
-        user_data = await get_user_data(user_id, username)
+        user_data = get_user_data(user_id) # Use the single get_user_data
         last_claim = user_data.get("last_quick_bonus_claim")
         now = datetime.now(timezone.utc)
 
@@ -521,13 +547,13 @@ async def claim_quick_bonus(request: UserRequest):
         user_data["level"] = new_level
         user_data["xp"] = new_xp
 
-        await update_user_data(
+        update_user_data(
             user_id,
-            user_data["balance"],
-            user_data["xp"],
-            user_data["level"],
+            balance=user_data["balance"],
+            xp=user_data["xp"],
+            level=user_data["level"],
             last_quick_bonus_claim=now
-        )
+        ) # Use the single update_user_data
         return {"message": f"Ви успішно отримали {BONUS_AMOUNT} фантиків!", "amount": BONUS_AMOUNT}
 
     except HTTPException:
@@ -693,7 +719,7 @@ class BlackjackRoom:
             # If player left during betting and they were the last one to bet, check if round can start
             if self.status == "betting":
                 logger.info(f"Room {self.room_id}: Player {user_id} left during betting. Re-checking round start conditions.")
-                await self._check_and_start_round_if_ready()
+                asyncio.create_task(self._check_and_start_round_if_ready()) # Use asyncio.create_task for non-blocking call
             
             await self.broadcast_room_state()
             self._check_and_end_game_if_empty()
@@ -763,7 +789,7 @@ class BlackjackRoom:
                         player.is_playing = False
                         logger.info(f"Player {player.user_id} did not bet in time, marked as not playing this round.")
                 await self.broadcast_room_state() # Send updated player statuses
-                await self._check_and_start_round_if_ready() # Check if round can start now
+                asyncio.create_task(self._check_and_start_round_if_ready()) # Check if round can start now
             elif next_status == "round_end":
                 await self._end_round()
         except asyncio.CancelledError:
@@ -850,7 +876,7 @@ class BlackjackRoom:
             await self.connections[user_id].send_json({"type": "error", "message": "Неправильний стан для ставки або ставка вже зроблена."})
             return
 
-        user_data = await get_user_data(user_id, player.username) # Fetch current balance
+        user_data = get_user_data(user_id) # Fetch current balance
         if user_data["balance"] < amount:
             await self.connections[user_id].send_json({"type": "error", "message": "Недостатньо фантиків для ставки."})
             return
@@ -858,7 +884,7 @@ class BlackjackRoom:
         player.bet = amount
         player.has_bet = True
         user_data["balance"] -= amount # Deduct bet immediately
-        await update_user_data(user_id, user_data["balance"], user_data["xp"], user_data["level"]) # Update DB
+        update_user_data(user_id, balance=user_data["balance"], xp=user_data["xp"], level=user_data["level"]) # Update DB
         logger.info(f"handle_bet: Player {user_id} successfully bet {amount}. New balance: {user_data['balance']}")
 
         # Log player has_bet statuses for debugging
@@ -866,7 +892,7 @@ class BlackjackRoom:
         logger.info(f"handle_bet: After player {user_id} bet, players' has_bet status: {player_has_bet_status}")
         
         await self.broadcast_room_state() # Update all clients with new bet status
-        await self._check_and_start_round_if_ready() # Check if all players have bet and round can start
+        asyncio.create_task(self._check_and_start_round_if_ready()) # Check if all players have bet and round can start
 
     async def handle_hit(self, user_id: int):
         player = self.players.get(user_id)
@@ -930,7 +956,7 @@ class BlackjackRoom:
                 # No need to deduct balance again, it was deducted on bet
                 continue
 
-            user_data = await get_user_data(user_id, player.username) # Fetch latest user data
+            user_data = get_user_data(user_id) # Fetch latest user data
             winnings = 0
             xp_gain = 0
             message = ""
@@ -968,7 +994,7 @@ class BlackjackRoom:
             user_data["level"] = new_level
             user_data["xp"] = new_xp
 
-            await update_user_data(user_id, user_data["balance"], user_data["xp"], user_data["level"])
+            update_user_data(user_id, balance=user_data["balance"], xp=user_data["xp"], level=user_data["level"])
             
             results[user_id] = {
                 "message": message,
@@ -1047,7 +1073,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
 
     username = f"Гравець {str(user_id)[-4:]}" # Default username
     try:
-        user_data = await get_user_data(user_id) # Fetch to get actual username if exists
+        user_data = get_user_data(user_id) # Fetch to get actual username if exists
         username = user_data.get('username', username)
     except Exception as e:
         logger.warning(f"Could not fetch username for {user_id} during WS connection: {e}")
@@ -1150,7 +1176,7 @@ async def read_root():
 
 # --- Telegram Webhook ---
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = f"https://{WEBHOOK_HOST}{WEBHOOK_PATH}" if WEBHOOK_HOST else None
+WEBHOOK_URL: Optional[str] = None # Initialize as None
 
 @app.post(WEBHOOK_PATH)
 async def bot_webhook(update: dict):
@@ -1168,26 +1194,30 @@ async def bot_webhook(update: dict):
         raise HTTPException(status_code=500, detail=f"Error processing update: {e}")
     return {"ok": True}
 
+# --- On startup: set webhook for Telegram Bot and initialize DB ---
 @app.on_event("startup")
 async def on_startup():
-    logger.info("Application startup event triggered.")
-    if not WEB_APP_FRONTEND_URL:
-        logger.error("WEB_APP_FRONTEND_URL environment variable is not set. WebApp might not function correctly.")
+    print("Application startup event triggered.")
+    init_db() # Call init_db here
+    print("Database initialization attempted.")
     
-    if WEBHOOK_HOST:
-        external_hostname = WEBHOOK_HOST
-    else:
-        logger.warning("RENDER_EXTERNAL_HOSTNAME environment variable is not set. Assuming local development or direct IP access.")
-        external_hostname = "localhost" # Fallback for local testing
-    
-    # Ensure WEB_APP_FRONTEND_URL is correctly formatted with https
+    # Declare globals at the top of the function
     global WEBHOOK_URL
-    WEBHOOK_URL = f"https://{external_hostname}{WEBHOOK_PATH}" 
     global WEB_APP_FRONTEND_URL
+
+    external_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
+    if not external_hostname:
+        logger.warning("RENDER_EXTERNAL_HOSTNAME environment variable not set. Assuming localhost for webhook setup.")
+        external_hostname = "localhost:8000" 
+    
+    WEBHOOK_URL = f"https://{external_hostname}{WEBHOOK_PATH}" 
+    
     if WEB_APP_FRONTEND_URL and not WEB_APP_FRONTEND_URL.startswith("https://"):
         WEB_APP_FRONTEND_URL = f"https://{WEB_APP_FRONTEND_URL}"
     
     if API_TOKEN and API_TOKEN != "DUMMY_TOKEN":
+        # Register the telegram_router with the main dispatcher
+        dp.include_router(telegram_router)
         try:
             webhook_info = await bot.get_webhook_info()
             if webhook_info.url != WEBHOOK_URL:
@@ -1207,5 +1237,7 @@ async def on_shutdown():
             await bot.delete_webhook()
             logger.info("Telegram webhook deleted.")
         except Exception as e:
-            logger.error(f"Failed to delete Telegram webhook: {e}")
-
+            logger.error(f"Failed to delete Telegram webhook on shutdown: {e}")
+    logger.info("Closing dispatcher storage and bot session.")
+    await bot.session.close() 
+    logger.info("Bot session closed.")
