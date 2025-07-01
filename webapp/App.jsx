@@ -6,7 +6,7 @@ const { useState, useEffect, createContext, useContext, useCallback, useRef } = 
 const Tone = window.Tone || {
     context: { state: 'suspended', resume: async () => {}, start: async () => {} },
     MembraneSynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; },
-    PolySynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; },
+    PolySynth: function() { return { toDestination: () => this, set: () => this, triggerAttackRelease: () => {} }; },
     NoiseSynth: function() { return { toDestination: () => this, set: () => {}, triggerAttackRelease: () => {} }; }
 };
 
@@ -231,7 +231,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // -----------------------------------------------------------------------------
 // Slot Machine Game Component
 // -----------------------------------------------------------------------------
-const SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀'];
+const SYMBOLS = ['🍒', '🍋', '🍊', '�', '🔔', '💎', '🍀'];
 const WILD_SYMBOL = '⭐';
 const SCATTER_SYMBOL = '💰';
 const ALL_REEL_SYMBOLS = [...SYMBOLS, WILD_SYMBOL, SCATTER_SYMBOL];
@@ -590,6 +590,222 @@ const Leaderboard = () => {
 
 
 // -----------------------------------------------------------------------------
+// Blackjack Game Component (PLACEHOLDER)
+// -----------------------------------------------------------------------------
+const BlackjackGame = () => {
+    const { user, fetchUserData, API_BASE_URL, sendTelegramLog } = useUser();
+    const [roomState, setRoomState] = useState(null);
+    const [betAmount, setBetAmount] = useState(100);
+    const [message, setMessage] = useState('');
+    const ws = useRef(null); // Ref for WebSocket instance
+
+    // WebSocket connection setup
+    useEffect(() => {
+        if (!user.userId) {
+            setMessage('Будь ласка, увійдіть через Telegram, щоб грати в Блекджек.');
+            return;
+        }
+
+        // Construct WebSocket URL
+        const wsProtocol = API_BASE_URL.startsWith('https') ? 'wss' : 'ws';
+        const wsUrl = `${wsProtocol}://${new URL(API_BASE_URL).host}/ws/${user.userId}`;
+        sendTelegramLog(`Attempting to connect to WebSocket: ${wsUrl}`);
+
+        // Initialize WebSocket
+        ws.current = new WebSocket(wsUrl);
+
+        ws.current.onopen = () => {
+            sendTelegramLog('WebSocket connection opened.');
+            setMessage('Підключено до кімнати. Очікування гравців...');
+            // Request initial state after connection is open
+            if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+                ws.current.send(JSON.stringify({ action: 'request_state' }));
+            }
+        };
+
+        ws.current.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                sendTelegramLog(`Received WS message: Type=${data.type}, Status=${data.status || 'N/A'}`);
+                if (data.type === 'game_state' || data.room_id) { // Assuming room state will have room_id
+                    setRoomState(data);
+                    setMessage(''); // Clear general message on state update
+                    if (data.status === 'betting') {
+                        setMessage('Зробіть вашу ставку!');
+                    } else if (data.status === 'playing' && data.current_player_turn === user.userId) {
+                        setMessage('Ваш хід!');
+                    } else if (data.status === 'playing') {
+                        setMessage('Хід іншого гравця...');
+                    } else if (data.status === 'round_end') {
+                        setMessage('Раунд завершено, очікування нового раунду...');
+                    } else if (data.status === 'waiting') {
+                        setMessage('Очікування гравців для початку гри...');
+                    }
+                } else if (data.type === 'error') {
+                    showCustomModal(`Помилка гри: ${data.message}`, "Помилка Блекджеку");
+                    sendTelegramLog(`Blackjack WS Error: ${data.message}`, 'JS_ERROR');
+                } else if (data.type === 'game_message') {
+                    showCustomModal(data.message, "Повідомлення гри");
+                    sendTelegramLog(`Blackjack Game Message: ${data.message}`);
+                } else if (data.type === 'round_result') {
+                    // Handle round results
+                    showCustomModal(`Результат раунду: ${data.message}\nВиграш: ${data.winnings}\nВаш баланс: ${data.balance}`, "Результат Раунду");
+                    fetchUserData(); // Update user balance/XP
+                    sendTelegramLog(`Blackjack Round Result: ${data.message}, Winnings: ${data.winnings}`);
+                }
+            } catch (e) {
+                console.error("Failed to parse WS message:", e, event.data);
+                sendTelegramLog(`Failed to parse WS message: ${e.message}. Data: ${event.data.substring(0, Math.min(event.data.length, 100))}`, 'JS_ERROR');
+            }
+        };
+
+        ws.current.onclose = (event) => {
+            sendTelegramLog(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason}`, 'JS_WARN');
+            setMessage(`З'єднання втрачено. Код: ${event.code}. Причина: ${event.reason || 'Невідома'}. Спробуйте перезавантажити сторінку.`);
+            setRoomState(null); // Clear room state on disconnect
+        };
+
+        ws.current.onerror = (error) => {
+            sendTelegramLog(`WebSocket error: ${error.message || 'Unknown error'}`, 'JS_ERROR');
+            setMessage('Помилка WebSocket. Спробуйте перезавантажити сторінку.');
+        };
+
+        // Cleanup on component unmount
+        return () => {
+            if (ws.current) {
+                sendTelegramLog('Closing WebSocket connection during cleanup.');
+                ws.current.close();
+            }
+        };
+    }, [user.userId, API_BASE_URL, sendTelegramLog, fetchUserData]); // Dependencies for useEffect
+
+    const sendWebSocketMessage = useCallback((action, payload = {}) => {
+        if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+            const message = { action, ...payload, user_id: user.userId, room_id: roomState?.room_id };
+            ws.current.send(JSON.stringify(message));
+            sendTelegramLog(`Sent WS message: Action=${action}, Payload=${JSON.stringify(payload)}`);
+        } else {
+            showCustomModal('WebSocket не підключено. Спробуйте перезавантажити сторінку.', "Помилка");
+            sendTelegramLog('Failed to send WS message: WebSocket not open.', 'JS_ERROR');
+        }
+    }, [user.userId, roomState?.room_id, sendTelegramLog]);
+
+    const handleBet = () => {
+        if (!user.userId || !roomState || roomState.status !== 'betting') {
+            showCustomModal('Не час робити ставки або ви не в кімнаті.', "Помилка");
+            return;
+        }
+        if (user.balance < betAmount) {
+            showCustomModal('Недостатньо коштів для ставки.', "Помилка");
+            return;
+        }
+        sendWebSocketMessage('bet', { amount: betAmount });
+    };
+
+    const handleHit = () => {
+        if (!user.userId || !roomState || roomState.status !== 'playing' || roomState.current_player_turn !== user.userId) {
+            showCustomModal('Зараз не ваш хід або гра неактивна.', "Помилка");
+            return;
+        }
+        sendWebSocketMessage('hit');
+    };
+
+    const handleStand = () => {
+        if (!user.userId || !roomState || roomState.status !== 'playing' || roomState.current_player_turn !== user.userId) {
+            showCustomModal('Зараз не ваш хід або гра неактивна.', "Помилка");
+            return;
+        }
+        sendWebSocketMessage('stand');
+    };
+
+    const currentPlayer = roomState?.players?.find(p => p.user_id === user.userId);
+    const isMyTurn = roomState?.status === 'playing' && roomState.current_player_turn === user.userId;
+    const canBet = roomState?.status === 'betting' && currentPlayer && !currentPlayer.has_bet && user.balance >= betAmount;
+    const canHitStand = isMyTurn && currentPlayer && currentPlayer.is_playing && currentPlayer.score < 21;
+
+
+    return (
+        <div className="flex-grow flex flex-col items-center justify-start p-4 md:p-8 w-full">
+            <h1 className="text-3xl md:text-4xl font-extrabold text-yellow-400 mb-4 drop-shadow-lg leading-tight text-center">
+                Блекджек
+            </h1>
+
+            <div className="game-info text-center mb-4">
+                {roomState ? (
+                    <>
+                        <p className="text-lg font-semibold">Кімната: <span className="text-yellow-300">{roomState.room_id}</span></p>
+                        <p className="text-lg font-semibold">Статус: <span className="text-yellow-300">{roomState.status}</span></p>
+                        {roomState.timer > 0 && (
+                            <p className="text-xl font-bold text-red-400">Таймер: {roomState.timer} сек.</p>
+                        )}
+                        <p className="text-md text-gray-300">{message}</p>
+                    </>
+                ) : (
+                    <p className="text-lg text-gray-300">Підключення до гри...</p>
+                )}
+            </div>
+
+            <div className="players-area w-full max-w-2xl bg-gray-800 rounded-xl shadow-2xl p-4 border-2 border-yellow-400 mb-4">
+                <h3 className="text-xl font-bold text-yellow-300 mb-2 text-center">Гравці ({roomState?.player_count}/{roomState?.max_players})</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {roomState?.players.map(player => (
+                        <div key={player.user_id} className={`player-card p-3 rounded-lg shadow-md ${player.user_id === user.userId ? 'bg-blue-700 border-blue-500' : 'bg-gray-700 border-gray-600'} ${player.user_id === roomState.current_player_turn ? 'border-4 border-green-400 animate-pulse' : ''} ${!player.is_playing ? 'opacity-50' : ''}`}>
+                            <p className="font-bold text-lg">{player.username} {player.user_id === user.userId && "(Ви)"}</p>
+                            <p>Ставка: {player.bet}</p>
+                            <p>Рука: {player.hand.join(', ') || 'Немає'}</p>
+                            <p>Очки: {player.score}</p>
+                            {!player.is_playing && <p className="text-red-300">Вибув</p>}
+                        </div>
+                    ))}
+                </div>
+            </div>
+
+            <div className="game-actions flex flex-col md:flex-row gap-4 w-full max-w-sm">
+                {roomState?.status === 'betting' && currentPlayer && !currentPlayer.has_bet && (
+                    <div className="flex flex-col w-full items-center">
+                        <input
+                            type="number"
+                            value={betAmount}
+                            onChange={(e) => setBetAmount(Math.max(1, parseInt(e.target.value) || 1))}
+                            min="1"
+                            max={user.balance}
+                            className="w-full p-2 rounded-md bg-gray-700 text-white text-center mb-2"
+                        />
+                        <button
+                            onClick={handleBet}
+                            disabled={!canBet}
+                            className={`action-button w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-6 rounded-full text-lg shadow-lg transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 ${!canBet ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                            Зробити ставку ({betAmount})
+                        </button>
+                    </div>
+                )}
+
+                {roomState?.status === 'playing' && isMyTurn && canHitStand && (
+                    <>
+                        <button
+                            onClick={handleHit}
+                            disabled={!canHitStand}
+                            className={`action-button w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-full text-lg shadow-lg transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 ${!canHitStand ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                            Взяти карту (Hit)
+                        </button>
+                        <button
+                            onClick={handleStand}
+                            disabled={!canHitStand}
+                            className={`action-button w-full bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-full text-lg shadow-lg transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95 ${!canHitStand ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                            Зупинитись (Stand)
+                        </button>
+                    </>
+                )}
+            </div>
+        </div>
+    );
+};
+
+
+// -----------------------------------------------------------------------------
 // Top Header Component (Balance, XP, Level, Bonuses, Leaderboard)
 // -----------------------------------------------------------------------------
 const TopHeader = ({ onShowLeaderboard }) => {
@@ -816,7 +1032,7 @@ const TopHeader = ({ onShowLeaderboard }) => {
 // -----------------------------------------------------------------------------
 function App() {
     const { isLoading, error, fetchUserData } = useUser();
-    const [currentPage, setCurrentPage] = useState('slots'); // 'slots', 'coin_flip', 'leaderboard'
+    const [currentPage, setCurrentPage] = useState('slots'); // 'slots', 'coin_flip', 'leaderboard', 'blackjack'
 
     const renderGame = () => {
         switch (currentPage) {
@@ -826,6 +1042,8 @@ function App() {
                 return <CoinFlip />;
             case 'leaderboard':
                 return <Leaderboard />;
+            case 'blackjack': // New case for Blackjack
+                return <BlackjackGame />;
             default:
                 return <SlotMachine />;
         }
@@ -883,6 +1101,12 @@ function App() {
                     🪙
                 </button>
                 <button
+                    onClick={() => setCurrentPage('blackjack')} // New button for Blackjack
+                    className={`nav-button p-2 rounded-full text-2xl transition-all duration-200 ${currentPage === 'blackjack' ? 'bg-yellow-500 text-gray-900 scale-110 shadow-lg' : 'text-gray-700 hover:text-gray-800'}`}
+                >
+                    ♠️
+                </button>
+                <button
                     onClick={() => setCurrentPage('leaderboard')}
                     className={`nav-button p-2 rounded-full text-2xl transition-all duration-200 ${currentPage === 'leaderboard' ? 'bg-yellow-500 text-gray-900 scale-110 shadow-lg' : 'text-gray-700 hover:text-gray-800'}`}
                 >
@@ -914,4 +1138,3 @@ function App() {
 // Make App and UserProvider globally accessible to index.html
 window.App = App;
 window.UserProvider = UserProvider;
-

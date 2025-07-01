@@ -88,7 +88,7 @@ else:
 dp = Dispatcher()
 
 # --- Конфігурація гри ---
-SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀']
+SYMBOLS = ['🍒', '�', '🍊', '🍇', '🔔', '💎', '🍀']
 WILD_SYMBOL = '⭐'
 SCATTER_SYMBOL = '💰'
 ALL_REEL_SYMBOLS = SYMBOLS + [WILD_SYMBOL, SCATTER_SYMBOL]
@@ -138,7 +138,7 @@ PAYOUTS = {
     ('🍒', '🍒', '🍒'): 1000, ('🍋', '🍋', '🍋'): 800, ('🍊', '🍊', '🍊'): 600,
     ('🍇', '🍇', '🍇'): 400, ('🔔', '🔔', '🔔'): 300, ('💎', '💎', '💎'): 200,
     ('🍀', '🍀', '🍀'): 150, ('⭐', '⭐', '⭐'): 2000, 
-    ('�', '🍒'): 100, ('🍋', '🍋'): 80, ('🍊', '🍊'): 60,
+    ('🍒', '🍒'): 100, ('🍋', '🍋'): 80, ('🍊', '🍊'): 60,
     ('🍇', '🍇'): 40, ('🔔', '🔔'): 30, ('💎', '💎'): 20,
     ('🍀', '🍀'): 10,
     ('💰', '💰'): 200, ('💰', '💰', '💰'): 500,
@@ -1031,6 +1031,7 @@ class BlackjackRoom:
                 player_state["dealer_hand"] = []
                 player_state["dealer_score"] = 0
                 await player.websocket.send_json(player_state)
+                logger.info(f"Sent room state to player {player.user_id} in room {self.room_id}. State: {player_state['status']}") # ДОДАНО ЛОГ
             except WebSocketDisconnect:
                 logger.warning(f"Player {player.user_id} in room {self.room_id} disconnected during state send. Removing.")
                 if player.user_id in self.players:
@@ -1349,6 +1350,7 @@ class BlackjackRoom:
                 player_results.append({
                     "user_id": player.user_id,
                     "username": player.username,
+                    "hand": player.hand.to_json(), # Додаємо руку гравця для відображення на фронтенді
                     "score": player.hand.value,
                     "bet": player.bet,
                     "is_busted": player.hand.value > 21
@@ -1364,7 +1366,8 @@ class BlackjackRoom:
                         "xp": get_user_data(player.user_id)["xp"],
                         "level": get_user_data(player.user_id)["level"],
                         "next_level_xp": get_xp_for_next_level(get_user_data(player.user_id)["level"]),
-                        "final_player_score": 0 # Немає рахунку, бо не грав
+                        "final_player_score": 0, # Немає рахунку, бо не грав
+                        "final_player_hand": [] # Немає руки, бо не грав
                     })
                 except WebSocketDisconnect:
                     logger.warning(f"Player {player.user_id} disconnected during round_result send (no participation).")
@@ -1372,7 +1375,7 @@ class BlackjackRoom:
                 player.reset_for_round() # Скидаємо стан для наступного раунду
                 continue # Переходимо до наступного гравця
 
-        # Визначаємо переможців серед гравців (найближчий до 21, не перебравши)
+        # Визначаємо переможців серед тих, хто не перебрав
         valid_players = [p for p in player_results if not p["is_busted"]]
         
         if not valid_players: # Всі активні гравці перебрали
@@ -1396,6 +1399,7 @@ class BlackjackRoom:
                             "level": updated_user_data_for_response["level"],
                             "next_level_xp": get_xp_for_next_level(updated_user_data_for_response["level"]),
                             "final_player_score": player.hand.value,
+                            "final_player_hand": player.hand.to_json(), # Додаємо руку гравця
                             "final_dealer_score": 0 # Дилера немає
                         })
                     except WebSocketDisconnect:
@@ -1453,6 +1457,7 @@ class BlackjackRoom:
                         "level": updated_user_data_for_response["level"],
                         "next_level_xp": get_xp_for_next_level(updated_user_data_for_response["level"]),
                         "final_player_score": player.hand.value,
+                        "final_player_hand": player.hand.to_json(), # Додаємо руку гравця
                         "final_dealer_score": 0 # Дилера немає
                     })
                 except WebSocketDisconnect:
