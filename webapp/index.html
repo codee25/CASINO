@@ -161,8 +161,8 @@
                         });
                         sendTelegramLog('User data fetched and updated successfully from backend.');
                     } else {
-                        sendTelegramLog('No valid user ID available for fetching data. Skipping API call.', 'JS_WARN');
-                        setUser(prevUser => ({
+                         sendTelegramLog('No valid user ID available for fetching data. Skipping API call.', 'JS_WARN');
+                         setUser(prevUser => ({
                             ...prevUser,
                             userId: currentUserId,
                             username: currentUsername,
@@ -170,7 +170,7 @@
                             xp: 0,
                             level: 1,
                             nextLevelXp: 100
-                        }));
+                         }));
                     }
                 } catch (err) {
                     console.error('Error fetching user data:', err);
@@ -337,15 +337,6 @@
                 return () => {
                     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
                         sendTelegramLog('UserProvider cleanup: Closing WebSocket connection.');
-                        // Explicitly send a leave_room message before closing
-                        if (user.userId && blackjackRoomState.room_id) {
-                            try {
-                                wsRef.current.send(JSON.stringify({ action: 'leave_room', user_id: user.userId, room_id: blackjackRoomState.room_id }));
-                                sendTelegramLog(`UserProvider cleanup: Sent leave_room for user ${user.userId} from room ${blackjackRoomState.room_id}.`);
-                            } catch (e) {
-                                sendTelegramLog(`UserProvider cleanup: Error sending leave_room: ${e.message}`, 'JS_ERROR');
-                            }
-                        }
                         wsRef.current.close(1000, "App unmounted.");
                     }
                     wsRef.current = null;
@@ -354,7 +345,7 @@
                         clearTimeout(sendWsMessageDebounceTimer.current);
                     }
                 };
-            }, [sendTelegramLog, user.userId, blackjackRoomState.room_id]); // Added blackjackRoomState.room_id to dependencies
+            }, [sendTelegramLog]);
 
 
             const getGameStatusMessage = (state, currentUserId) => {
@@ -369,7 +360,7 @@
                 
                 // Якщо поточний користувач не в списку гравців кімнати, але кімната активна
                 if (!currentPlayer && state.status !== "disconnected" && state.status !== "error") {
-                    return "Приєднуємось до гри...";
+                     return "Приєднуємось до гри...";
                 }
                 // Якщо користувач відключений або помилка, і його немає в списку (або він був видалений)
                 if (!currentPlayer && (state.status === "disconnected" || state.status === "error")) {
@@ -505,7 +496,7 @@
         // -----------------------------------------------------------------------------
         const SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀'];
         const WILD_SYMBOL = '⭐';
-        const SCATTER_SYMBOL = '�';
+        const SCATTER_SYMBOL = '💰';
         const ALL_REEL_SYMBOLS = [...SYMBOLS, WILD_SYMBOL, SCATTER_SYMBOL];
         const REEL_HEIGHT_PX = 90; // Default height for a symbol in a reel
         const REEL_SPIN_CYCLES = 5;
@@ -540,6 +531,7 @@
                         
                         gsap.set(reelContent, { y: 0 }); // Reset position
                         reelRef.current.classList.add('spinning'); // Add spinning class
+
                         masterTimeline.to(reelContent, {
                             y: -(animationSymbols.length - 1) * REEL_HEIGHT_PX,
                             duration: REEL_SPIN_DURATION_BASE + (index * REEL_STOP_STAGGER),
@@ -1056,6 +1048,7 @@
                             </p>
                         )}
                     </div>
+
                     {/* Bet Input Modal - if we wanted variable bets */}
                     {showBetModal && (
                         <div className="modal fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-70 active">
