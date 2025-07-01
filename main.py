@@ -502,15 +502,22 @@ async def add_balance_command(message: Message):
 @dp.message(Command("give_balance"))
 async def give_balance_command(message: Message):
     sender_id = message.from_user.id
+    logger.info(f"Attempting to use /give_balance command by user {sender_id}. ADMIN_ID is set to: {ADMIN_ID}")
 
-    if ADMIN_ID is None or sender_id != ADMIN_ID:
+    if ADMIN_ID is None:
+        logger.warning(f"ADMIN_ID is not set. User {sender_id} cannot use /give_balance.")
+        await message.reply("Помилка: ADMIN_ID не налаштовано на сервері. Ця команда недоступна.")
+        return
+    
+    if sender_id != ADMIN_ID:
+        logger.warning(f"User {sender_id} tried to use /give_balance without admin privileges (ADMIN_ID: {ADMIN_ID}).")
         await message.reply("У вас немає дозволу на використання цієї команди.")
-        logger.warning(f"User {sender_id} tried to use /give_balance without admin privileges.")
         return
 
     args = message.text.split()
     if len(args) != 3:
         await message.reply("Будь ласка, вкажіть ID гравця та суму. Використання: `/give_balance <user_id> <amount>`")
+        logger.warning(f"Admin {sender_id} used /give_balance with incorrect number of arguments: {message.text}")
         return
 
     try:
@@ -518,9 +525,11 @@ async def give_balance_command(message: Message):
         amount = int(args[2])
         if amount <= 0:
             await message.reply("Сума має бути позитивним числом.")
+            logger.warning(f"Admin {sender_id} tried to give non-positive amount: {amount}")
             return
     except ValueError:
-        await message.reply("Невірний ID гравця або сума. Будь ласка, введіть числові значення.")
+        await message.reply("Невірна сума. Будь ласка, введіть числові значення.")
+        logger.warning(f"Admin {sender_id} used /give_balance with non-integer arguments: {args[1]}, {args[2]}")
         return
 
     target_user_data = get_user_data(target_user_id)
@@ -1468,13 +1477,10 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 
                 logger.info(f"WS: Received message from {user_id_int} in room {room_id}: {message}")
 
-                if not room or room.room_id != room_id: # Перевіряємо кімнату ще раз, на випадок якщо її видалили/змінили
-                    # Якщо кімнати немає або вона змінилася (наприклад, після видалення і створення нової)
-                    # потрібно перепідключити гравця або повідомити про помилку.
-                    # Для простоти, надішлемо помилку і закриємо з'єднання.
+                if not room or room.room_id != room_id: 
                     logger.warning(f"Room mismatch for player {user_id_int}. Expected {room_id}, actual {room.room_id if room else 'None'}. Closing WS.")
                     await websocket.send_json({"type": "error", "message": "Кімната гри була оновлена або видалена. Будь ласка, перепідключіться."})
-                    break # Вийти з циклу, щоб закрити WebSocket
+                    break 
                 
                 if action == "bet":
                     amount = message.get("amount")
@@ -1486,7 +1492,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                     await room.handle_action(user_id_int, action)
                 elif action == "request_state":
                     await room.send_room_state_to_all()
-                elif action == "pong": # Обробка pong-повідомлення
+                elif action == "pong": 
                     logger.debug(f"Received pong from {user_id_int}.")
                 else:
                     await websocket.send_json({"type": "error", "message": "Невідома дія."})
@@ -1494,7 +1500,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 logger.warning(f"Received non-JSON message from {user_id_int}: {message_text}")
                 try:
                     await websocket.send_json({"type": "error", "message": "Неправильний формат повідомлення (очікується JSON)."})
-                except RuntimeError: # WebSocket might be closed already
+                except RuntimeError: 
                     pass
             except Exception as e:
                 logger.error(f"Error handling WebSocket message from {user_id_int} in room {room_id}: {e}", exc_info=True)
@@ -1530,9 +1536,15 @@ async def get_root():
 # --- Telegram Webhook Endpoint ---
 @app.post(WEBHOOK_PATH)
 async def bot_webhook(request: Request):
-    update_json = await request.json()
-    update = types.Update.model_validate(update_json, context={"bot": bot})
-    await dp.feed_update(bot, update) 
+    logger.info("Received webhook update from Telegram.") 
+    try:
+        update_json = await request.json()
+        update = types.Update.model_validate(update_json, context={"bot": bot})
+        await dp.feed_update(bot, update) 
+        logger.info(f"Webhook update successfully processed. Update ID: {update.update_id}")
+    except Exception as e:
+        logger.error(f"Error processing webhook update: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
     return {"ok": True}
 
 # --- On startup: set webhook for Telegram Bot and initialize DB ---
@@ -1544,11 +1556,10 @@ async def on_startup():
     external_hostname = os.getenv("RENDER_EXTERNAL_HOSTNAME")
     if not external_hostname:
         logger.warning("RENDER_EXTERNAL_HOSTNAME environment variable not set. Assuming localhost for webhook setup.")
-        external_hostname = "localhost:8000" # Fallback for local testing
+        external_hostname = "localhost:8000" 
     global WEBHOOK_URL
     WEBHOOK_URL = f"https://{external_hostname}{WEBHOOK_PATH}" 
     global WEB_APP_FRONTEND_URL
-    # Ensure WEB_APP_FRONTEND_URL starts with https://
     if WEB_APP_FRONTEND_URL and not WEB_APP_FRONTEND_URL.startswith("https://"):
         WEB_APP_FRONTEND_URL = f"https://{WEB_APP_FRONTEND_URL}"
     
