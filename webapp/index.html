@@ -155,14 +155,14 @@
                             };
                             if (prevUser.level !== 1 && newUserState.level > prevUser.level) {
                                 playLevelUpSound();
-                                showCustomModal(`🎉 Ви досягли Рівня ${newUserState.level}! �`, "Підвищення Рівня!");
+                                showCustomModal(`🎉 Ви досягли Рівня ${newUserState.level}! 🎉`, "Підвищення Рівня!");
                             }
                             return newUserState;
                         });
                         sendTelegramLog('User data fetched and updated successfully from backend.');
                     } else {
-                         sendTelegramLog('No valid user ID available for fetching data. Skipping API call.', 'JS_WARN');
-                         setUser(prevUser => ({
+                        sendTelegramLog('No valid user ID available for fetching data. Skipping API call.', 'JS_WARN');
+                        setUser(prevUser => ({
                             ...prevUser,
                             userId: currentUserId,
                             username: currentUsername,
@@ -170,7 +170,7 @@
                             xp: 0,
                             level: 1,
                             nextLevelXp: 100
-                         }));
+                        }));
                     }
                 } catch (err) {
                     console.error('Error fetching user data:', err);
@@ -360,7 +360,7 @@
                 
                 // Якщо поточний користувач не в списку гравців кімнати, але кімната активна
                 if (!currentPlayer && state.status !== "disconnected" && state.status !== "error") {
-                     return "Приєднуємось до гри...";
+                    return "Приєднуємось до гри...";
                 }
                 // Якщо користувач відключений або помилка, і його немає в списку (або він був видалений)
                 if (!currentPlayer && (state.status === "disconnected" || state.status === "error")) {
@@ -531,7 +531,6 @@
                         
                         gsap.set(reelContent, { y: 0 }); // Reset position
                         reelRef.current.classList.add('spinning'); // Add spinning class
-
                         masterTimeline.to(reelContent, {
                             y: -(animationSymbols.length - 1) * REEL_HEIGHT_PX,
                             duration: REEL_SPIN_DURATION_BASE + (index * REEL_STOP_STAGGER),
@@ -1048,7 +1047,6 @@
                             </p>
                         )}
                     </div>
-
                     {/* Bet Input Modal - if we wanted variable bets */}
                     {showBetModal && (
                         <div className="modal fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-70 active">
