@@ -528,7 +528,7 @@ async def give_balance_command(message: Message):
             logger.warning(f"Admin {sender_id} tried to give non-positive amount: {amount}")
             return
     except ValueError:
-        await message.reply("Невірна сума. Будь ласка, введіть числові значення.")
+        await message.reply("Невірний ID гравця або сума. Будь ласка, введіть числові значення.")
         logger.warning(f"Admin {sender_id} used /give_balance with non-integer arguments: {args[1]}, {args[2]}")
         return
 
@@ -1536,7 +1536,7 @@ async def get_root():
 # --- Telegram Webhook Endpoint ---
 @app.post(WEBHOOK_PATH)
 async def bot_webhook(request: Request):
-    logger.info("Received webhook update from Telegram.") 
+    logger.info("Received webhook update from Telegram.") # ДОДАНО: Лог на початку обробки вебхука
     try:
         update_json = await request.json()
         update = types.Update.model_validate(update_json, context={"bot": bot})
