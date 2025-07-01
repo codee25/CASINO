@@ -834,8 +834,13 @@
 
             // Blackjack WebSocket Connection Management
             const connectBlackjackWebSocket = useCallback(() => {
-                if (!user.userId || !API_BASE_URL) {
-                    sendTelegramLog('connectBlackjackWebSocket: User ID or API_BASE_URL not available, skipping WS connection.', 'JS_DEBUG');
+                if (!user.userId) {
+                    sendTelegramLog('connectBlackjackWebSocket: User ID not available, skipping WS connection.', 'JS_DEBUG');
+                    return;
+                }
+                if (!API_BASE_URL) {
+                    sendTelegramLog('connectBlackjackWebSocket: API_BASE_URL not available, skipping WS connection.', 'JS_ERROR');
+                    showModal('Критична помилка: URL сервера не налаштовано.', 'Помилка Конфігурації');
                     return;
                 }
 
@@ -886,12 +891,15 @@
                         if (message.type === "error") {
                             showModal(message.message, "Помилка Гри"); // Use new showModal
                             setBlackjackGameMessage(message.message);
+                            sendTelegramLog(`Blackjack WS Error Message: ${message.message}`, 'JS_ERROR');
                         } else if (message.type === "game_message") {
                             setBlackjackGameMessage(message.message);
+                            sendTelegramLog(`Blackjack WS Game Message: ${message.message}`);
                         } else if (message.type === "level_up") {
                             playLevelUpSound();
                             showModal(`🎉 Ви досягли Рівня ${message.level}! 🎉`, "Підвищення Рівня!"); // Use new showModal
                             fetchUserData(); // Update all user stats
+                            sendTelegramLog(`Blackjack WS Level Up: ${message.level}`);
                         } else if (message.room_id) { // It's a room state update
                             setBlackjackRoomState(prevState => {
                                 const newTimer = (message.status === "starting_timer" || message.status === "betting" || message.status === "playing") ? message.timer : 0;
@@ -902,6 +910,7 @@
                                 });
                                 return { ...message, timer: newTimer }; 
                             });
+                            // Only update general game message if it's not a round_result (which has its own specific message)
                             if (message.type !== "round_result") {
                                 setBlackjackGameMessage(getGameStatusMessage(message, user.userId));
                             }
@@ -925,10 +934,14 @@
                                 nextLevelXp: next_level_xp
                             }));
                             sendTelegramLog('User data updated from round_result message.');
+                        } else {
+                            sendTelegramLog(`Blackjack WS: Received UNKNOWN message type: ${JSON.stringify(message).substring(0, 100)}`, 'JS_ERROR');
+                            showModal(`Невідома дія: ${JSON.stringify(message).substring(0, 50)}...`, "Помилка Гри");
                         }
                     } catch (e) {
-                        sendTelegramLog(`Blackjack WS: Error parsing message or in onmessage handler: ${e.message}`, 'JS_ERROR');
+                        sendTelegramLog(`Blackjack WS: Error parsing message or in onmessage handler: ${e.message}. Raw data: ${event.data.substring(0, 100)}`, 'JS_ERROR');
                         console.error("Blackjack WS onmessage error:", e);
+                        showModal(`Помилка обробки повідомлення: ${e.message}`, "Помилка Гри");
                     }
                 };
 
@@ -1053,7 +1066,8 @@
                                 <div key={idx} className="card-item relative">{getCardDisplay(cardStr)}</div>
                             ))}
                         </div>
-                        <p className="text-sm">Рахунок: {player.score} | Ставка: {player.bet}</p>
+                        <p classNameN
+e="text-sm">Рахунок: {player.score} | Ставка: {player.bet}</p>
                         {blackjackRoomState.status === "betting" && !player.has_bet && isCurrentPlayer && (
                             <p className="text-yellow-300 text-sm animate-pulse">Зробіть ставку!</p>
                         )}

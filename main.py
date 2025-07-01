@@ -16,7 +16,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from aiogram import Bot, Dispatcher, types, Router # Import Router
+from aiogram import Bot, Dispatcher, types, Router
 from aiogram.enums import ParseMode
 from aiogram.types import WebAppInfo, InlineKeyboardMarkup, InlineKeyboardButton, Message
 from aiogram.filters import CommandStart, Command
@@ -136,7 +136,7 @@ PAYOUTS = {
     ('🍇', '🍇', '🍇'): 400, ('🔔', '🔔', '🔔'): 300, ('💎', '💎', '💎'): 200,
     ('🍀', '🍀', '🍀'): 150, ('⭐', '⭐', '⭐'): 2000, 
     ('🍒', '🍒'): 100, ('🍋', '🍋'): 80, ('🍊', '🍊'): 60,
-    ('🍇', '🍇'): 40, ('🔔', '🔔'): 30, ('💎', '💎'): 20,
+    ('🍇', '🍇'): 40, ('🔔', '🔔'): 30, ('�', '💎'): 20,
     ('🍀', '🍀'): 10,
     ('💰', '💰'): 200, ('💰', '💰', '💰'): 500,
 }
@@ -438,7 +438,7 @@ def coin_flip_game_logic(user_id: int | str, choice: str) -> Dict:
 
 # --- Обробники Telegram-бота (aiogram v3 синтаксис) ---
 # Define a separate router for Telegram handlers
-telegram_router = Router() # CORRECTED: Changed to Router()
+telegram_router = Router()
 
 @telegram_router.message(CommandStart())
 async def send_welcome(message: Message):
@@ -1082,7 +1082,7 @@ class BlackjackRoom:
             await self.send_room_state_to_all() # Оновити стан, щоб інші бачили, що цей гравець не грає
             
             # Після того, як гравець позначений як "не грає", перевіряємо, чи можна почати раунд
-            self._check_and_start_round_if_ready()
+            asyncio.create_task(self._check_and_start_round_if_ready()) # Запускаємо як асинхронну задачу
             return
             
         player.bet = amount
@@ -1096,10 +1096,10 @@ class BlackjackRoom:
         current_player_bets_status = {p.user_id: p.has_bet for p in self.players.values()}
         logger.info(f"handle_bet: After player {user_id} bet, players' has_bet status: {current_player_bets_status}")
 
-        self._check_and_start_round_if_ready()
+        asyncio.create_task(self._check_and_start_round_if_ready()) # Запускаємо як асинхронну задачу
 
 
-    def _check_and_start_round_if_ready(self):
+    async def _check_and_start_round_if_ready(self):
         """Перевіряє, чи всі гравці завершили фазу ставок, і запускає раунд."""
         # Всі гравці, які були в кімнаті на початку фази ставок, повинні або зробити ставку,
         # або бути позначені як is_playing=False (наприклад, через недостатність коштів або таймер).
@@ -1120,7 +1120,7 @@ class BlackjackRoom:
                     self.betting_timer.cancel() # Скасувати таймер ставок, якщо він ще працює
                     logger.info(f"Room {self.room_id}: Betting timer cancelled as all players finished betting.")
                 logger.info(f"Room {self.room_id}: All players finished betting. Starting round. Initiating start_round task.")
-                asyncio.create_task(self.start_round()) # Запускаємо як асинхронну задачу
+                await self.start_round() # Запускаємо безпосередньо, оскільки ми вже в async контексті
             else:
                 logger.info(f"Room {self.room_id}: All players finished betting, but round already in progress. Skipping start_round.")
         else:
@@ -1483,11 +1483,16 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 
                 logger.info(f"WS: Received message from {user_id_int} in room {room_id}: {message}")
 
-                if not room or room.room_id != room_id: 
-                    logger.warning(f"Room mismatch for player {user_id_int}. Expected {room_id}, actual {room.room_id if room else 'None'}. Closing WS.")
+                # Re-fetch room reference in case it was removed/recreated (e.g., if last player left and rejoined quickly)
+                current_room = blackjack_room_manager.rooms.get(room_id)
+                if not current_room or current_room.room_id != room_id: 
+                    logger.warning(f"Room mismatch for player {user_id_int}. Expected {room_id}, actual {current_room.room_id if current_room else 'None'}. Closing WS.")
                     await websocket.send_json({"type": "error", "message": "Кімната гри була оновлена або видалена. Будь ласка, перепідключіться."})
                     break 
                 
+                # Update the room variable to the latest reference
+                room = current_room
+
                 if action == "bet":
                     amount = message.get("amount")
                     if amount is not None:
@@ -1579,7 +1584,7 @@ async def on_startup():
     
     if API_TOKEN and API_TOKEN != "DUMMY_TOKEN":
         # Register the telegram_router with the main dispatcher
-        dp.include_router(telegram_router) # CORRECTED: telegram_router is now a Router()
+        dp.include_router(telegram_router)
         try:
             webhook_info = await bot.get_webhook_info()
             if webhook_info.url != WEBHOOK_URL:
@@ -1601,8 +1606,5 @@ async def on_shutdown():
         except Exception as e:
             logger.error(f"Failed to delete Telegram webhook on shutdown: {e}")
     logger.info("Closing dispatcher storage and bot session.")
-    # dp.storage.close() is not an async function, should be awaited if it were
-    # For aiogram 3.x, storage is typically managed by the bot or dispatcher
-    # and might not need explicit close here unless custom storage is used.
     await bot.session.close() 
     logger.info("Bot session closed.")
