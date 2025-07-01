@@ -259,6 +259,7 @@
                 modalMessageElement.innerHTML = `<h3 class="text-xl font-bold mb-2">${title}</h3><p>${msg}</p>`;
                 modalElement.classList.add('active');
                 modalElement.classList.remove('hidden'); // Ensure it's visible
+                modalElement.style.zIndex = '1000'; // Ensure it's on top of everything
                 if (window.Telegram && window.Telegram.WebApp) {
                     Telegram.WebApp.sendData(`JS_LOG: Showing modal: ${title} - ${msg.substring(0, Math.min(msg.length, 50))}`);
                 }
@@ -271,6 +272,7 @@
                 const closeModal = () => {
                     modalElement.classList.remove('active');
                     modalElement.classList.add('hidden'); // Hide it
+                    modalElement.style.zIndex = ''; // Reset z-index
                 };
 
                 if (closeButton) {
@@ -307,7 +309,7 @@
         // -----------------------------------------------------------------------------
         // Slot Machine Game Component
         // -----------------------------------------------------------------------------
-        const SYMBOLS = ['🍒', '🍋', '🍊', '�', '🔔', '💎', '🍀'];
+        const SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀'];
         const WILD_SYMBOL = '⭐';
         const SCATTER_SYMBOL = '💰';
         const ALL_REEL_SYMBOLS = [...SYMBOLS, WILD_SYMBOL, SCATTER_SYMBOL];
@@ -813,6 +815,7 @@
                 }
 
                 // IMPORTANT: Only proceed if there's no current WebSocket or it's explicitly closed/closing
+                // This prevents creating multiple connections if one is already open or connecting
                 if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
                     sendTelegramLog('connectBlackjackWebSocket: Existing WS connection found and is open or connecting, reusing.', 'JS_DEBUG');
                     return;
@@ -941,8 +944,9 @@
 
                 // Cleanup function for when BlackjackGame component unmounts
                 return () => {
+                    sendTelegramLog('BlackjackGame cleanup: Component unmounted.');
                     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-                        sendTelegramLog('BlackjackGame cleanup: Closing WebSocket connection.');
+                        sendTelegramLog('BlackjackGame cleanup: Closing WebSocket connection cleanly.');
                         // Send leave_room message if in a room
                         if (user.userId && blackjackRoomState.room_id) {
                             try {
@@ -952,9 +956,11 @@
                                 sendTelegramLog(`BlackjackGame cleanup: Error sending leave_room: ${e.message}`, 'JS_ERROR');
                             }
                         }
-                        wsRef.current.close(1000, "Component unmounted.");
+                        wsRef.current.close(1000, "Component unmounted."); // Clean close code
+                    } else if (wsRef.current) {
+                        sendTelegramLog(`BlackjackGame cleanup: WS not open, current state: ${wsRef.current.readyState}. No explicit close needed.`);
                     }
-                    wsRef.current = null;
+                    wsRef.current = null; // Ensure ref is cleared
                     if (sendWsMessageDebounceTimer.current) {
                         clearTimeout(sendWsMessageDebounceTimer.current);
                     }
@@ -1042,7 +1048,7 @@
 
 
             return (
-                <div className="blackjack-game flex-grow flex flex-col items-center justify-between p-4 md:p-8 w-full">
+                <div className="blackjack-game flex-grow flex flex-col items-center justify-between p-4 md:p-8 w-full min-h-0">
                     <h1 className="text-3xl md:text-4xl font-extrabold text-yellow-400 mb-4 drop-shadow-lg leading-tight text-center">
                         ♦️ Блекджек ♦️
                     </h1>
@@ -1059,7 +1065,7 @@
                     )}
 
                     {/* Players' Hands */}
-                    <div className="players-area flex-grow w-full max-w-lg overflow-y-auto p-2 bg-gray-900 rounded-xl shadow-inner border border-gray-700">
+                    <div className="players-area flex-grow w-full max-w-lg overflow-y-auto p-2 bg-gray-900 rounded-xl shadow-inner border border-gray-700 min-h-0">
                         {blackjackRoomState.players.length === 0 ? (
                             <p className="text-center text-gray-400 mt-4">Очікування гравців...</p>
                         ) : (
@@ -1482,7 +1488,7 @@
                     <TopHeader />
 
                     {/* Main Game Content Area - renders current game */}
-                    <div className="relative flex-grow flex flex-col items-center justify-around w-full main-content-area overflow-y-auto"> 
+                    <div className="relative flex-grow flex flex-col items-center justify-around w-full main-content-area overflow-y-auto min-h-0"> 
                         {renderGame()}
                     </div>
 
