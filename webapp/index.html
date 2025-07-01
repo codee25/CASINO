@@ -85,7 +85,8 @@
             });
             const [isLoading, setIsLoading] = useState(true);
             const [error, setError] = useState(null);
-            const isFetchingRef = useRef(false);
+            const isFetchingRef = useRef(false); // To prevent concurrent fetches
+            const [isInitialized, setIsInitialized] = useState(false); // New state to control initial data fetch
 
             // Backend API URL (ВАШ АКТУАЛЬНИЙ URL!)
             const API_BASE_URL = 'https://casino-0h0l.onrender.com'; // <--- ЗМІНІТЬ ЦЕЙ РЯДОК!
@@ -99,15 +100,8 @@
                 }
             }, []);
 
-            const fetchUserData = useCallback(async () => {
-                if (isFetchingRef.current) {
-                    sendTelegramLog('fetchUserData: Already fetching, skipping call.', 'JS_DEBUG');
-                    return; // Prevent multiple concurrent fetches
-                }
-
-                isFetchingRef.current = true;
-                setIsLoading(true);
-                setError(null);
+            // Effect 1: Identify user from Telegram WebApp (runs once on mount)
+            useEffect(() => {
                 let currentUserId = null;
                 let currentUsername = 'Unnamed Player';
 
@@ -130,25 +124,39 @@
                     setError('Для повної функціональності запустіть гру через Telegram. (Локально)');
                 }
 
-                try {
-                    if (currentUserId) {
-                        const response = await fetch(`${API_BASE_URL}/api/get_balance`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ user_id: currentUserId, username: currentUsername })
-                        });
+                // Set the initial user state based on Telegram data or dummy data
+                setUser(prev => ({
+                    ...prev,
+                    userId: currentUserId,
+                    username: currentUsername
+                }));
+                setIsInitialized(true); // Mark as initialized after user ID is determined
+                sendTelegramLog(`UserProvider: Initial user identification complete. User ID: ${currentUserId}`);
+            }, [sendTelegramLog]); // Run only once on mount
 
+            // Effect 2: Fetch user data from backend (runs when userId is available and initialized)
+            useEffect(() => {
+                // Only fetch if user.userId is set, initialization is complete, and no fetch is in progress
+                if (isInitialized && user.userId && !isFetchingRef.current) {
+                    isFetchingRef.current = true; // Set flag immediately to prevent re-entry
+                    setIsLoading(true);
+                    setError(null);
+
+                    fetch(`${API_BASE_URL}/api/get_balance`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ user_id: user.userId, username: user.username })
+                    })
+                    .then(response => {
                         if (!response.ok) {
-                            const errData = await response.json();
-                            sendTelegramLog(`Balance fetch API failed: ${errData.error || 'Unknown error'}`, 'JS_ERROR');
-                            throw new Error(errData.error || 'Failed to fetch user data');
+                            return response.json().then(errData => { throw new Error(errData.error || 'Failed to fetch user data'); });
                         }
-
-                        const data = await response.json();
+                        return response.json();
+                    })
+                    .then(data => {
                         setUser(prevUser => {
                             const newUserState = {
-                                userId: currentUserId,
-                                username: currentUsername,
+                                ...prevUser,
                                 balance: data.balance,
                                 xp: data.xp,
                                 level: data.level,
@@ -158,42 +166,42 @@
                             };
                             if (prevUser.level !== 1 && newUserState.level > prevUser.level) {
                                 playLevelUpSound();
-                                // showCustomModal(`🎉 Ви досягли Рівня ${newUserState.level}! 🎉`, "Підвищення Рівня!"); // Moved to ModalContext
                             }
                             return newUserState;
                         });
                         sendTelegramLog('User data fetched and updated successfully from backend.');
-                    } else {
-                         sendTelegramLog('No valid user ID available for fetching data. Skipping API call.', 'JS_WARN');
-                         setUser(prevUser => ({
-                            ...prevUser,
-                            userId: currentUserId,
-                            username: currentUsername,
-                            balance: 10000,
-                            xp: 0,
-                            level: 1,
-                            nextLevelXp: 100
-                         }));
-                    }
-                } catch (err) {
-                    console.error('Error fetching user data:', err);
-                    setError(err.message || 'Помилка звʼязку з сервером. Перевірте зʼєднання.');
-                    sendTelegramLog(`Error during user data fetch: ${err.message}`, 'JS_ERROR');
-                } finally {
-                    setIsLoading(false);
-                    isFetchingRef.current = false;
+                    })
+                    .catch(err => {
+                        console.error('Error fetching user data:', err);
+                        setError(err.message || 'Помилка звʼязку з сервером. Перевірте зʼєднання.');
+                        sendTelegramLog(`Error during user data fetch: ${err.message}`, 'JS_ERROR');
+                    })
+                    .finally(() => {
+                        setIsLoading(false);
+                        isFetchingRef.current = false; // Reset flag after fetch completes
+                    });
                 }
-            }, [sendTelegramLog, API_BASE_URL]);
+            }, [isInitialized, user.userId, user.username, API_BASE_URL, sendTelegramLog, setUser]); // Dependencies for this useEffect
+
+            // Function to manually trigger a data refresh from other components
+            const refetchUserData = useCallback(() => {
+                if (user.userId && !isFetchingRef.current) {
+                    sendTelegramLog('refetchUserData called: Triggering data refresh.');
+                    // Temporarily set isInitialized to false, then true, to force the useEffect above to re-run
+                    // This is a common pattern to "force" a useEffect with specific dependencies to re-evaluate
+                    setIsInitialized(false); 
+                    setTimeout(() => setIsInitialized(true), 0); // Schedule setting back to true
+                } else if (isFetchingRef.current) {
+                    sendTelegramLog('refetchUserData called: Already fetching, skipping.', 'JS_DEBUG');
+                } else {
+                    sendTelegramLog('refetchUserData called: User ID not available, skipping.', 'JS_WARN');
+                }
+            }, [user.userId, isFetchingRef, sendTelegramLog]);
 
 
-            useEffect(() => {
-                fetchUserData(); 
-            }, [fetchUserData]); 
-
-            // No WebSocket cleanup here anymore, it's handled by BlackjackGame component
             return (
                 <UserContext.Provider value={{ 
-                    user, setUser, fetchUserData, isLoading, error, API_BASE_URL, sendTelegramLog
+                    user, setUser, fetchUserData: refetchUserData, isLoading, error, API_BASE_URL, sendTelegramLog
                 }}>
                     {children}
                 </UserContext.Provider>
@@ -331,7 +339,7 @@
         // -----------------------------------------------------------------------------
         // Slot Machine Game Component
         // -----------------------------------------------------------------------------
-        const SYMBOLS = ['�', '🍋', '🍊', '🍇', '🔔', '💎', '🍀'];
+        const SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀'];
         const WILD_SYMBOL = '⭐';
         const SCATTER_SYMBOL = '💰';
         const ALL_REEL_SYMBOLS = [...SYMBOLS, WILD_SYMBOL, SCATTER_SYMBOL];
@@ -429,6 +437,7 @@
                     if (response.ok) {
                         await animateReels(data.symbols); // Animate with actual results
                         await fetchUserData(); // Update balance and XP from backend
+                        // No need to set user state directly here, fetchUserData handles it.
 
                         if (data.winnings > 0) {
                             setMessage(`🎉 Ви виграли ${data.winnings} фантиків! 🎉`);
@@ -1363,11 +1372,11 @@
                     if (response.ok) {
                         playDailyBonusSound();
                         showModal(`🎉 Ви отримали ${data.amount} фантиків!`, "Щоденна Винагорода!");
-                        fetchUserData();
+                        fetchUserData(); // Use the new refetchUserData
                         sendTelegramLog(`Daily Bonus claimed: ${data.amount}`);
                     } else {
                         showModal(`❌ Помилка: ${data.error || 'Невідома помилка.'}`, "Помилка Винагороди");
-                        fetchUserData(); // Fetch updated data to refresh cooldown
+                        fetchUserData(); // Use the new refetchUserData to refresh cooldown
                         sendTelegramLog(`Daily Bonus API failed: ${data.error || 'Unknown'}`, 'JS_ERROR');
                     }
                 } catch (error) {
@@ -1439,11 +1448,11 @@
                     if (response.ok) {
                         playQuickBonusSound();
                         showModal(`💰 Ви отримали ${data.amount} фантиків!`, "Швидкий Бонус!");
-                        fetchUserData();
+                        fetchUserData(); // Use the new refetchUserData
                         sendTelegramLog(`Quick Bonus claimed: ${data.amount}`);
                     } else {
                         showModal(`❌ Помилка: ${data.error || 'Невідома помилка.'}`, "Помилка Бонусу");
-                        fetchUserData(); // Fetch updated data to refresh cooldown
+                        fetchUserData(); // Use the new refetchUserData to refresh cooldown
                         sendTelegramLog(`Quick Bonus API failed: ${data.error || 'Unknown'}`, 'JS_ERROR');
                     }
                 } catch (error) {
@@ -1527,7 +1536,7 @@
                             <p className="text-xl text-red-500 font-bold mb-4">Помилка завантаження:</p>
                             <p className="text-lg mb-6">{error}</p>
                             <button 
-                                onClick={fetchUserData}
+                                onClick={fetchUserData} // This will now call refetchUserData
                                 className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-6 rounded-full text-lg shadow-lg transition-all duration-300 ease-in-out transform hover:scale-105 active:scale-95"
                             >
                                 Спробувати знову
