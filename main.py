@@ -132,11 +132,11 @@ def get_xp_for_next_level(level: int) -> int:
     return LEVEL_THRESHOLDS[level] 
 
 PAYOUTS = {
-    ('🍒', '🍒', '🍒'): 1000, ('🍋', '🍋', '🍋'): 800, ('🍊', '🍊', '🍊'): 600,
+    ('🍒', '�', '🍒'): 1000, ('🍋', '🍋', '🍋'): 800, ('🍊', '🍊', '🍊'): 600,
     ('🍇', '🍇', '🍇'): 400, ('🔔', '🔔', '🔔'): 300, ('💎', '💎', '💎'): 200,
     ('🍀', '🍀', '🍀'): 150, ('⭐', '⭐', '⭐'): 2000, 
     ('🍒', '🍒'): 100, ('🍋', '🍋'): 80, ('🍊', '🍊'): 60,
-    ('🍇', '🍇'): 40, ('🔔', '🔔'): 30, ('�', '💎'): 20,
+    ('🍇', '🍇'): 40, ('🔔', '🔔'): 30, ('💎', '💎'): 20,
     ('🍀', '🍀'): 10,
     ('💰', '💰'): 200, ('💰', '💰', '💰'): 500,
 }
@@ -880,7 +880,7 @@ class BlackjackRoom:
                     player.has_bet = True # Але його фаза ставок завершена
                     logger.info(f"Player {player.user_id} did not bet in time, marked as not playing for this round.")
             await room.send_room_state_to_all() # Оновити стан після примусового завершення ставок
-            room._check_and_start_round_if_ready()
+            asyncio.create_task(room._check_and_start_round_if_ready()) # Запускаємо як асинхронну задачу
         room.timer_countdown = 0 # Скидаємо таймер після завершення
 
     async def add_player(self, user_id: int, username: str, websocket: WebSocket):
@@ -946,7 +946,7 @@ class BlackjackRoom:
                 elif self.status == "betting":
                     # Якщо гравець вийшов під час ставок, перевірити, чи можна почати раунд
                     logger.info(f"Room {self.room_id}: Player {user_id} left during betting. Re-checking round start conditions.")
-                    self._check_and_start_round_if_ready() # Перевірити, чи всі інші вже поставили
+                    asyncio.create_task(self._check_and_start_round_if_ready()) # Запускаємо як асинхронну задачу
                 
                 await self.send_room_state_to_all()
         else:
@@ -1479,7 +1479,8 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
             message_text = await websocket.receive_text()
             try:
                 message = json.loads(message_text)
-                action = message.get("action")
+                action = message.get("action") # Це поле для дій гравця (bet, hit, stand, leave_room)
+                message_type = message.get("type") # Це поле для системних повідомлень (ping, pong)
                 
                 logger.info(f"WS: Received message from {user_id_int} in room {room_id}: {message}")
 
@@ -1493,6 +1494,12 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 # Update the room variable to the latest reference
                 room = current_room
 
+                # --- Handle system messages first ---
+                if message_type == "pong": # Correctly handle pong messages from frontend
+                    logger.debug(f"Received pong from {user_id_int}.")
+                    continue # Process next message
+
+                # --- Handle game actions ---
                 if action == "bet":
                     amount = message.get("amount")
                     if amount is not None:
@@ -1503,8 +1510,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                     await room.handle_action(user_id_int, action)
                 elif action == "request_state":
                     await room.send_room_state_to_all()
-                elif action == "pong": 
-                    logger.debug(f"Received pong from {user_id_int}.")
                 elif action == "leave_room": # Handle leave_room action
                     room_id_to_leave = message.get("room_id")
                     if room_id_to_leave == room.room_id:
@@ -1514,6 +1519,8 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                     else:
                         await websocket.send_json({"type": "error", "message": "Ви не в цій кімнаті."})
                 else:
+                    # Fallback for unknown actions/message types not explicitly handled
+                    logger.warning(f"Received unknown action or message type from {user_id_int}: {message}")
                     await websocket.send_json({"type": "error", "message": "Невідома дія."})
             except json.JSONDecodeError:
                 logger.warning(f"Received non-JSON message from {user_id_int}: {message_text}")
