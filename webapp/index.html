@@ -341,7 +341,7 @@
         // -----------------------------------------------------------------------------
         const SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀'];
         const WILD_SYMBOL = '⭐';
-        const SCATTER_SYMBOL = '💰';
+        const SCATTER_SYMBOL = '�';
         const ALL_REEL_SYMBOLS = [...SYMBOLS, WILD_SYMBOL, SCATTER_SYMBOL];
         const REEL_HEIGHT_PX = 90; // Default height for a symbol in a reel
         const REEL_SPIN_CYCLES = 5;
@@ -739,11 +739,18 @@
             const { user, fetchUserData, API_BASE_URL, sendTelegramLog, setUser } = useUser();
             const { showModal } = useModal(); // Use the new modal hook
             
-            // Moved WebSocket state and refs to this component
+            // WebSocket state and refs
             const wsRef = useRef(null);
             const wsReconnectAttempts = useRef(0);
             const wsReconnectTimeout = useRef(null);
             const isConnectingWsRef = useRef(false); // Changed to useRef
+
+            // Ref to hold all necessary callbacks and state setters for onmessage
+            // This ensures onmessage is stable even if these functions/states change
+            const wsCallbacks = useRef({
+                setUser, fetchUserData, showModal, sendTelegramLog, getGameStatusMessage: null, // Will be set in useEffect
+                playLevelUpSound, playWinSoundEffect, playLoseSoundEffect
+            });
 
             const [blackjackRoomState, setBlackjackRoomState] = useState({
                 room_id: null,
@@ -761,7 +768,7 @@
             const [showBetModal, setShowBetModal] = useState(false);
             const [localTimer, setLocalTimer] = useState(0); 
 
-            // Helper to determine game status message
+            // Helper to determine game status message (now depends on user.userId, so it's stable)
             const getGameStatusMessage = useCallback((state, currentUserId) => {
                 if (!state || !state.room_id) {
                     if (state.status === "connecting") return "Підключення до сервера...";
@@ -813,6 +820,19 @@
                 }
             }, [user.userId]); // Depend on user.userId for the current player check
 
+            // Update wsCallbacks ref whenever relevant functions/states change
+            useEffect(() => {
+                wsCallbacks.current.setUser = setUser;
+                wsCallbacks.current.fetchUserData = fetchUserData;
+                wsCallbacks.current.showModal = showModal;
+                wsCallbacks.current.sendTelegramLog = sendTelegramLog;
+                wsCallbacks.current.getGameStatusMessage = getGameStatusMessage;
+                wsCallbacks.current.playLevelUpSound = playLevelUpSound;
+                wsCallbacks.current.playWinSoundEffect = playWinSoundEffect;
+                wsCallbacks.current.playLoseSoundEffect = playLoseSoundEffect;
+            }, [setUser, fetchUserData, showModal, sendTelegramLog, getGameStatusMessage, playLevelUpSound, playWinSoundEffect, playLoseSoundEffect]);
+
+
             // Debounce for sendWsMessage to prevent spamming request_state
             const sendWsMessageDebounceTimer = useRef(null);
             const sendWsMessage = useCallback((action, payload = {}) => {
@@ -847,7 +867,7 @@
 
             // Function to cleanly disconnect WebSocket
             const disconnectBlackjackWebSocket = useCallback((code = 1000, reason = "User initiated disconnect.") => {
-                sendTelegramLog(`disconnectBlackjackWebSocket called. Current readyState: ${wsRef.current?.readyState}, isConnectingWsRef.current: ${isConnectingWsRef.current}`);
+                sendTelegramLog(`disconnectBlackjackWebSocket called by: ${new Error().stack.split('\n')[2]} with code ${code}, reason: ${reason}. Current readyState: ${wsRef.current?.readyState}`);
                 if (wsRef.current) {
                     if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
                         sendTelegramLog(`Blackjack WS: Closing connection cleanly. Code: ${code}, Reason: ${reason}`);
@@ -886,12 +906,12 @@
 
                 if (!user.userId) {
                     sendTelegramLog('connectBlackjackWebSocket: User ID not available, skipping WS connection.', 'JS_DEBUG');
-                    showModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб отримати User ID.', "Недоступно");
+                    wsCallbacks.current.showModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб отримати User ID.', "Недоступно");
                     return;
                 }
                 if (!API_BASE_URL) {
                     sendTelegramLog('connectBlackjackWebSocket: API_BASE_URL not available, skipping WS connection.', 'JS_ERROR');
-                    showModal('Критична помилка: URL сервера не налаштовано.', 'Помилка Конфігурації');
+                    wsCallbacks.current.showModal('Критична помилка: URL сервера не налаштовано.', 'Помилка Конфігурації');
                     return;
                 }
 
@@ -919,7 +939,7 @@
                 const newWs = new WebSocket(websocketUrl);
 
                 newWs.onopen = () => {
-                    sendTelegramLog("Blackjack WS: Connected.");
+                    wsCallbacks.current.sendTelegramLog("Blackjack WS: Connected.");
                     setBlackjackGameMessage("Підключено. Шукаємо кімнату...");
                     sendWsMessage("request_state"); // Request initial state after connection
                     wsReconnectAttempts.current = 0; // Reset reconnect attempts on successful connection
@@ -931,6 +951,7 @@
                 };
 
                 newWs.onmessage = (event) => {
+                    const { setUser, fetchUserData, showModal, sendTelegramLog, getGameStatusMessage, playLevelUpSound, playWinSoundEffect, playLoseSoundEffect } = wsCallbacks.current;
                     try {
                         const message = JSON.parse(event.data);
                         if (message.type === "ping") {
@@ -945,6 +966,7 @@
                             showModal(message.message, "Помилка Гри");
                             setBlackjackGameMessage(message.message);
                             sendTelegramLog(`Blackjack WS Error Message: ${message.message}`, 'JS_ERROR');
+                            // Use the stable disconnect function
                             disconnectBlackjackWebSocket(1001, "Server error received.");
                         } else if (message.type === "game_message") {
                             setBlackjackGameMessage(message.message);
@@ -998,17 +1020,17 @@
                 };
 
                 newWs.onclose = (event) => {
-                    sendTelegramLog(`Blackjack WS: Disconnected. Code: ${event.code}, Reason: ${event.reason}.`, 'JS_WARN');
+                    wsCallbacks.current.sendTelegramLog(`Blackjack WS: Disconnected. Code: ${event.code}, Reason: ${event.reason}.`, 'JS_WARN');
                     isConnectingWsRef.current = false; // Reset connecting flag on close
                     
                     if (event.code !== 1000 && wsReconnectAttempts.current < 5) {
                         wsReconnectAttempts.current++;
                         const delay = Math.min(1000 * (wsReconnectAttempts.current + 1), 5000);
-                        sendTelegramLog(`Attempting to reconnect WS in ${delay / 1000} seconds (attempt ${wsReconnectAttempts.current}).`, 'JS_LOG');
+                        wsCallbacks.current.sendTelegramLog(`Attempting to reconnect WS in ${delay / 1000} seconds (attempt ${wsReconnectAttempts.current}).`, 'JS_LOG');
                         wsReconnectTimeout.current = setTimeout(() => connectBlackjackWebSocket(), delay);
                     } else if (event.code !== 1000) {
-                        sendTelegramLog('Max WebSocket reconnect attempts reached. Please refresh.', 'JS_ERROR');
-                        showModal('Відключено від гри. Будь ласка, оновіть сторінку або спробуйте підключитися знову.', 'Помилка підключення');
+                        wsCallbacks.current.sendTelegramLog('Max WebSocket reconnect attempts reached. Please refresh.', 'JS_ERROR');
+                        wsCallbacks.current.showModal('Відключено від гри. Будь ласка, оновіть сторінку або спробуйте підключитися знову.', 'Помилка підключення');
                     }
                     setBlackjackRoomState(prev => ({ 
                         ...prev, 
@@ -1028,7 +1050,7 @@
                 };
 
                 newWs.onerror = (error) => {
-                    sendTelegramLog(`Blackjack WS: Error: ${error.message || error}`, 'JS_ERROR');
+                    wsCallbacks.current.sendTelegramLog(`Blackjack WS: Error: ${error.message || error}`, 'JS_ERROR');
                     setBlackjackGameMessage(`Помилка підключення: ${error.message || error}`);
                     setBlackjackRoomState(prev => ({ ...prev, status: "error", room_id: null, timer: 0 }));
                     if (newWs) { // Use newWs here, not wsRef.current
@@ -1039,7 +1061,7 @@
                 };
 
                 wsRef.current = newWs;
-            }, [user.userId, API_BASE_URL, sendTelegramLog, fetchUserData, getGameStatusMessage, setUser, sendWsMessage, showModal, disconnectBlackjackWebSocket]); // Dependencies for this useCallback
+            }, [user.userId, API_BASE_URL, sendWsMessage, disconnectBlackjackWebSocket]); // Dependencies for this useCallback are now minimal and stable
 
 
             // Effect to manage WebSocket connection based on currentPage and user.userId
@@ -1076,8 +1098,7 @@
                         disconnectBlackjackWebSocket(1000, "Component unmounted during cleanup.");
                     }
                 };
-            }, [currentPage, user.userId]); // ONLY DEPEND ON currentPage and user.userId.
-            // connectBlackjackWebSocket and disconnectBlackjackWebSocket are stable callbacks, so they don't need to be here.
+            }, [currentPage, user.userId, connectBlackjackWebSocket, disconnectBlackjackWebSocket, sendTelegramLog]); // Added sendTelegramLog to dependencies for clarity, though it's stable.
 
 
             // Effect to update local timer based on blackjackRoomState.status
