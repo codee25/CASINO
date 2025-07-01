@@ -231,7 +231,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // -----------------------------------------------------------------------------
 // Slot Machine Game Component
 // -----------------------------------------------------------------------------
-const SYMBOLS = ['🍒', '🍋', '🍊', '�', '🔔', '💎', '🍀'];
+const SYMBOLS = ['🍒', '🍋', '🍊', '🍇', '🔔', '💎', '🍀'];
 const WILD_SYMBOL = '⭐';
 const SCATTER_SYMBOL = '💰';
 const ALL_REEL_SYMBOLS = [...SYMBOLS, WILD_SYMBOL, SCATTER_SYMBOL];
@@ -590,7 +590,7 @@ const Leaderboard = () => {
 
 
 // -----------------------------------------------------------------------------
-// Blackjack Game Component (PLACEHOLDER)
+// Blackjack Game Component (Updated for Debugging)
 // -----------------------------------------------------------------------------
 const BlackjackGame = () => {
     const { user, fetchUserData, API_BASE_URL, sendTelegramLog } = useUser();
@@ -598,36 +598,51 @@ const BlackjackGame = () => {
     const [betAmount, setBetAmount] = useState(100);
     const [message, setMessage] = useState('');
     const ws = useRef(null); // Ref for WebSocket instance
+    const isWsConnected = useRef(false); // Track connection status
 
     // WebSocket connection setup
     useEffect(() => {
+        sendTelegramLog('BlackjackGame useEffect: Running WS setup.');
         if (!user.userId) {
             setMessage('Будь ласка, увійдіть через Telegram, щоб грати в Блекджек.');
+            sendTelegramLog('BlackjackGame useEffect: user.userId is null, skipping WS setup.');
             return;
         }
 
         // Construct WebSocket URL
         const wsProtocol = API_BASE_URL.startsWith('https') ? 'wss' : 'ws';
         const wsUrl = `${wsProtocol}://${new URL(API_BASE_URL).host}/ws/${user.userId}`;
-        sendTelegramLog(`Attempting to connect to WebSocket: ${wsUrl}`);
+        sendTelegramLog(`BlackjackGame useEffect: Attempting to connect to WebSocket: ${wsUrl}`);
+
+        // Close existing WebSocket if it's open
+        if (ws.current && (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING)) {
+            sendTelegramLog('BlackjackGame useEffect: Existing WS found and open/connecting, closing it before new connection.');
+            ws.current.close(1000, "Component re-initialization"); // Code 1000 for normal closure
+        }
 
         // Initialize WebSocket
         ws.current = new WebSocket(wsUrl);
+        isWsConnected.current = false; // Reset connection status
 
         ws.current.onopen = () => {
-            sendTelegramLog('WebSocket connection opened.');
+            sendTelegramLog('BlackjackGame WS onopen: Connection opened.');
+            isWsConnected.current = true;
             setMessage('Підключено до кімнати. Очікування гравців...');
             // Request initial state after connection is open
             if (ws.current && ws.current.readyState === WebSocket.OPEN) {
                 ws.current.send(JSON.stringify({ action: 'request_state' }));
+                sendTelegramLog('BlackjackGame WS onopen: Sent request_state.');
             }
         };
 
         ws.current.onmessage = (event) => {
+            sendTelegramLog(`BlackjackGame WS onmessage: Received raw data: ${event.data.substring(0, 100)}...`);
             try {
                 const data = JSON.parse(event.data);
-                sendTelegramLog(`Received WS message: Type=${data.type}, Status=${data.status || 'N/A'}`);
+                sendTelegramLog(`BlackjackGame WS onmessage: Parsed data type: ${data.type}`);
+                
                 if (data.type === 'game_state' || data.room_id) { // Assuming room state will have room_id
+                    sendTelegramLog(`BlackjackGame WS onmessage: Updating roomState. Status: ${data.status}`);
                     setRoomState(data);
                     setMessage(''); // Clear general message on state update
                     if (data.status === 'betting') {
@@ -643,38 +658,47 @@ const BlackjackGame = () => {
                     }
                 } else if (data.type === 'error') {
                     showCustomModal(`Помилка гри: ${data.message}`, "Помилка Блекджеку");
-                    sendTelegramLog(`Blackjack WS Error: ${data.message}`, 'JS_ERROR');
+                    sendTelegramLog(`BlackjackGame WS Error: ${data.message}`, 'JS_ERROR');
                 } else if (data.type === 'game_message') {
                     showCustomModal(data.message, "Повідомлення гри");
-                    sendTelegramLog(`Blackjack Game Message: ${data.message}`);
+                    sendTelegramLog(`BlackjackGame WS Game Message: ${data.message}`);
                 } else if (data.type === 'round_result') {
                     // Handle round results
                     showCustomModal(`Результат раунду: ${data.message}\nВиграш: ${data.winnings}\nВаш баланс: ${data.balance}`, "Результат Раунду");
                     fetchUserData(); // Update user balance/XP
-                    sendTelegramLog(`Blackjack Round Result: ${data.message}, Winnings: ${data.winnings}`);
+                    sendTelegramLog(`BlackjackGame WS Round Result: ${data.message}, Winnings: ${data.winnings}`);
+                } else if (data.type === 'ping') {
+                    sendTelegramLog('BlackjackGame WS onmessage: Received server ping.');
                 }
             } catch (e) {
-                console.error("Failed to parse WS message:", e, event.data);
-                sendTelegramLog(`Failed to parse WS message: ${e.message}. Data: ${event.data.substring(0, Math.min(event.data.length, 100))}`, 'JS_ERROR');
+                console.error("BlackjackGame WS onmessage: Failed to parse WS message:", e, event.data);
+                sendTelegramLog(`BlackjackGame WS onmessage: Failed to parse WS message: ${e.message}. Data: ${event.data.substring(0, Math.min(event.data.length, 100))}`, 'JS_ERROR');
             }
         };
 
         ws.current.onclose = (event) => {
-            sendTelegramLog(`WebSocket connection closed. Code: ${event.code}, Reason: ${event.reason}`, 'JS_WARN');
+            isWsConnected.current = false;
+            sendTelegramLog(`BlackjackGame WS onclose: Connection closed. Code: ${event.code}, Reason: ${event.reason}. Cleanly closed: ${event.wasClean}`);
             setMessage(`З'єднання втрачено. Код: ${event.code}. Причина: ${event.reason || 'Невідома'}. Спробуйте перезавантажити сторінку.`);
             setRoomState(null); // Clear room state on disconnect
         };
 
         ws.current.onerror = (error) => {
-            sendTelegramLog(`WebSocket error: ${error.message || 'Unknown error'}`, 'JS_ERROR');
+            isWsConnected.current = false;
+            sendTelegramLog(`BlackjackGame WS onerror: WebSocket error: ${error.message || 'Unknown error'}`, 'JS_ERROR');
             setMessage('Помилка WebSocket. Спробуйте перезавантажити сторінку.');
         };
 
-        // Cleanup on component unmount
+        // Cleanup on component unmount or useEffect re-run
         return () => {
+            sendTelegramLog('BlackjackGame useEffect cleanup: Running.');
             if (ws.current) {
-                sendTelegramLog('Closing WebSocket connection during cleanup.');
-                ws.current.close();
+                if (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING) {
+                    sendTelegramLog('BlackjackGame useEffect cleanup: Closing active WebSocket connection.');
+                    ws.current.close(1000, "Component unmount/cleanup"); // Code 1000 for normal closure
+                }
+                ws.current = null;
+                isWsConnected.current = false;
             }
         };
     }, [user.userId, API_BASE_URL, sendTelegramLog, fetchUserData]); // Dependencies for useEffect
@@ -683,15 +707,19 @@ const BlackjackGame = () => {
         if (ws.current && ws.current.readyState === WebSocket.OPEN) {
             const message = { action, ...payload, user_id: user.userId, room_id: roomState?.room_id };
             ws.current.send(JSON.stringify(message));
-            sendTelegramLog(`Sent WS message: Action=${action}, Payload=${JSON.stringify(payload)}`);
+            sendTelegramLog(`BlackjackGame sendWebSocketMessage: Sent WS message: Action=${action}, Payload=${JSON.stringify(payload)}`);
         } else {
             showCustomModal('WebSocket не підключено. Спробуйте перезавантажити сторінку.', "Помилка");
-            sendTelegramLog('Failed to send WS message: WebSocket not open.', 'JS_ERROR');
+            sendTelegramLog('BlackjackGame sendWebSocketMessage: Failed to send WS message: WebSocket not open.', 'JS_ERROR');
         }
     }, [user.userId, roomState?.room_id, sendTelegramLog]);
 
     const handleBet = () => {
-        if (!user.userId || !roomState || roomState.status !== 'betting') {
+        if (!user.userId) {
+            showCustomModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб грати.', "Недоступно");
+            return;
+        }
+        if (!roomState || roomState.status !== 'betting') {
             showCustomModal('Не час робити ставки або ви не в кімнаті.', "Помилка");
             return;
         }
@@ -703,7 +731,11 @@ const BlackjackGame = () => {
     };
 
     const handleHit = () => {
-        if (!user.userId || !roomState || roomState.status !== 'playing' || roomState.current_player_turn !== user.userId) {
+        if (!user.userId) {
+            showCustomModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб грати.', "Недоступно");
+            return;
+        }
+        if (!roomState || roomState.status !== 'playing' || roomState.current_player_turn !== user.userId) {
             showCustomModal('Зараз не ваш хід або гра неактивна.', "Помилка");
             return;
         }
@@ -711,7 +743,11 @@ const BlackjackGame = () => {
     };
 
     const handleStand = () => {
-        if (!user.userId || !roomState || roomState.status !== 'playing' || roomState.current_player_turn !== user.userId) {
+        if (!user.userId) {
+            showCustomModal('⚠️ Будь ласка, запустіть гру через Telegram, щоб грати.', "Недоступно");
+            return;
+        }
+        if (!roomState || roomState.status !== 'playing' || roomState.current_player_turn !== user.userId) {
             showCustomModal('Зараз не ваш хід або гра неактивна.', "Помилка");
             return;
         }
