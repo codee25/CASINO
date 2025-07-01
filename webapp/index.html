@@ -745,6 +745,7 @@
                     return state.players.every(p => p.has_bet || !p.is_playing);
                 };
 
+
                 switch (state.status) {
                     case "connecting": return "Підключення до сервера...";
                     case "waiting": return `Очікування гравців (${state.player_count}/${state.min_players})`;
@@ -931,7 +932,7 @@
             // Effect to connect to WebSocket and request state when component mounts
             useEffect(() => {
                 if (user.userId) {
-                    sendTelegramLog('BlackjackGame component mounted. Attempting to connect WS and request state.');
+                    sendTelegramLog('BlackjackGame component mounted. Attempting to connect WS.');
                     connectBlackjackWebSocket();
                 }
 
@@ -958,6 +959,7 @@
                         clearTimeout(wsReconnectTimeout.current);
                         wsReconnectTimeout.current = null;
                     }
+                    // Reset blackjack state when component unmounts
                     setBlackjackRoomState(prev => ({ ...prev, status: "disconnected", room_id: null, timer: 0 }));
                     setBlackjackGameMessage("Натисніть 'Блекджек', щоб приєднатися.");
                 };
@@ -1052,21 +1054,6 @@
                             {localTimer}
                         </div>
                     )}
-
-                    {/* Dealer's Hand area */}
-                    <div className="dealer-area bg-gray-800 p-3 rounded-lg shadow-inner border border-gray-700 w-full max-w-lg mb-4">
-                        <p className="font-bold text-lg mb-1 text-center">Дилер</p>
-                        <div className="flex flex-wrap justify-center gap-1 mb-1">
-                            {blackjackRoomState.dealer_hand.length > 0 ? (
-                                blackjackRoomState.dealer_hand.map((cardStr, idx) => (
-                                    <div key={idx} className="card-item relative">{getCardDisplay(cardStr)}</div>
-                                ))
-                            ) : (
-                                <p className="text-gray-400">Карти дилера</p>
-                            )}
-                        </div>
-                        <p className="text-sm text-center">Рахунок: {blackjackRoomState.dealer_score}</p>
-                    </div>
 
                     {/* Players' Hands */}
                     <div className="players-area flex-grow w-full max-w-lg overflow-y-auto p-2 bg-gray-900 rounded-xl shadow-inner border border-gray-700">
@@ -1492,7 +1479,7 @@
                     <TopHeader />
 
                     {/* Main Game Content Area - renders current game */}
-                    <div className="relative flex-grow flex flex-col items-center justify-around w-full main-content-area"> 
+                    <div className="relative flex-grow flex flex-col items-center justify-around w-full main-content-area overflow-y-auto"> 
                         {renderGame()}
                     </div>
 
